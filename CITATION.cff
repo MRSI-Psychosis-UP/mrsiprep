@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use MRSIPrep, cite the MRSI-Metabolic-Connectome work this package is derived from."
+title: "MRSIPrep"
+authors:
+  - family-names: Lucchetti
+    given-names: Federico
+license: "CHUV academic non-commercial research license"
+version: "0.1.0"
