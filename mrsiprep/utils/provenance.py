@@ -7,11 +7,18 @@ import platform
 import shutil
 import sys
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import numpy as np
 
-from mrsiprep import __version__
+try:
+    from mrsiprep import __version__
+except ImportError:
+    try:
+        __version__ = version("mrsiprep")
+    except PackageNotFoundError:
+        __version__ = "unknown"
 
 
 class NumpyEncoder(json.JSONEncoder):
