@@ -1,42 +1,46 @@
-FROM freesurfer/freesurfer:7.4.1
+FROM freesurfer/freesurfer:7.4.1 AS freesurfer
+
+FROM python:3.11-slim
 
 LABEL org.opencontainers.image.title="MRSIPrep"
 LABEL org.opencontainers.image.description="BIDS App for preprocessing quantified whole-brain MRSI derivatives"
 LABEL org.opencontainers.image.licenses="CHUV academic non-commercial research license"
 
-ENV PYTHONUNBUFFERED=1 \
+ENV FREESURFER_HOME=/usr/local/freesurfer \
+    SUBJECTS_DIR=/out/freesurfer \
+    FS_LICENSE=/opt/freesurfer/license.txt \
+    PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    MPLBACKEND=Agg
+    MPLBACKEND=Agg \
+    PATH=/usr/local/freesurfer/bin:/usr/local/freesurfer/fsfast/bin:/usr/local/freesurfer/tktools:/usr/local/freesurfer/mni/bin:$PATH
 
-RUN if command -v apt-get >/dev/null 2>&1; then \
-        export DEBIAN_FRONTEND=noninteractive; \
-        apt-get update; \
-        apt-get install -y --no-install-recommends \
-            build-essential ca-certificates git libgl1 libglib2.0-0 libgomp1 python3-pip; \
-        rm -rf /var/lib/apt/lists/*; \
-    elif command -v dnf >/dev/null 2>&1; then \
-        dnf install -y \
-            gcc gcc-c++ make ca-certificates git mesa-libGL glib2 libgomp python3-pip; \
-        dnf clean all; \
-    elif command -v yum >/dev/null 2>&1; then \
-        yum install -y \
-            gcc gcc-c++ make ca-certificates git mesa-libGL glib2 libgomp python3-pip; \
-        yum clean all; \
-    elif command -v microdnf >/dev/null 2>&1; then \
-        microdnf install -y \
-            gcc gcc-c++ make ca-certificates git mesa-libGL glib2 libgomp python3-pip; \
-        microdnf clean all; \
-    else \
-        command -v python3 >/dev/null 2>&1; \
-        command -v git >/dev/null 2>&1 || true; \
-    fi
+COPY --from=freesurfer /usr/local/freesurfer /usr/local/freesurfer
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bc \
+        build-essential \
+        ca-certificates \
+        git \
+        libgomp1 \
+        libgl1 \
+        libglib2.0-0 \
+        libglu1-mesa \
+        libx11-6 \
+        libxext6 \
+        libxmu6 \
+        libxt6 \
+        perl \
+        tcsh \
+        tk \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/mrsiprep
 COPY pyproject.toml README.md LICENSE ./
 COPY mrsiprep ./mrsiprep
 
-RUN python3 -m ensurepip --upgrade || true \
-    && python3 -m pip install --upgrade pip \
-    && python3 -m pip install ".[ants]"
+RUN python -m pip install --upgrade pip \
+    && python -m pip install ".[ants]"
 
 ENTRYPOINT ["mrsiprep"]
