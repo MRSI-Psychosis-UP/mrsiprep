@@ -25,7 +25,7 @@ def validate_recording(config: MRSIPrepConfig, subject: str, session: str | None
     if missing:
         raise ValidationError(f"Missing metabolite maps for sub-{subject} ses-{session}: {', '.join(missing)}")
 
-    if config.registration_t1_target == "brain-csf":
+    if config.registration_t1_target == "brain-csf" and config.tissue_backend not in {"ants-atropos", "freesurfer"}:
         p3 = layout.cat12_probseg(subject, session, 3)
         if not p3 or not p3.exists():
             raise ValidationError(

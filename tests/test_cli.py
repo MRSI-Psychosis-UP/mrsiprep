@@ -9,9 +9,14 @@ class CLITests(unittest.TestCase):
         cfg = parse_args(["/tmp/bids", "/tmp/derivatives", "participant", "--participant-label", "sub-S001"])
         self.assertEqual(cfg.registration_t1_target, "brain-csf")
         self.assertEqual(cfg.participant_label, ["sub-S001"])
-        self.assertEqual(cfg.tissue_backend, "existing")
+        self.assertEqual(cfg.tissue_backend, "freesurfer")
         self.assertEqual(cfg.derivative_dir, Path("/tmp/derivatives/mrsiprep"))
 
     def test_cli_ants_atropos_option(self):
         cfg = parse_args(["/tmp/bids", "/tmp/out", "participant", "--tissue-backend", "ants-atropos"])
         self.assertEqual(cfg.tissue_backend, "ants-atropos")
+
+    def test_cli_freesurfer_option(self):
+        cfg = parse_args(["/tmp/bids", "/tmp/out", "participant", "--tissue-backend", "freesurfer", "--fs-subjects-dir", "/tmp/fs"])
+        self.assertEqual(cfg.tissue_backend, "freesurfer")
+        self.assertEqual(cfg.freesurfer_dir, Path("/tmp/fs"))

@@ -5,7 +5,7 @@ mrsiprep "$1" "$2" participant \
   --participant-label S001 \
   --session-label V1 \
   --registration-t1-target brain-csf \
-  --tissue-backend existing \
+  --tissue-backend freesurfer \
   --parcellation-mode chimera \
   --chimera-scheme LFMIHIFIS \
   --chimera-scale 3 \

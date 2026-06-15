@@ -12,6 +12,14 @@ from mrsiprep.io.validators import ValidationError, validate_recording
 from mrsiprep.mrsi.pvc import create_tissue_4d, run_pvc
 from mrsiprep.mrsi.resampling import transform_mrsi_maps
 from mrsiprep.parcellation.extraction import extract_regional_metabolites
+from mrsiprep.tissue.ants_atropos import atropos_pve_path, segment_t1_atropos
+from mrsiprep.tissue.freesurfer import (
+    freesurfer_brain_mask_path,
+    freesurfer_brain_path,
+    freesurfer_pve_path,
+    segment_t1_freesurfer,
+)
+from mrsiprep.tissue.masks import build_brain_csf_seed_mask
 from mrsiprep.utils.logging import LOGGER
 from mrsiprep.utils.misc import normalize_session, normalize_subject, read_participant_pairs
 from mrsiprep.utils.provenance import write_provenance
@@ -70,7 +78,33 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
     LOGGER.info("Processing sub-%s%s", subject, f" ses-{session}" if session else "")
 
     t1_path, inputs = validate_recording(config, subject, session)
-    anat = prepare_anatomical(config, subject, session, t1_path)
+    precomputed_tissue_t1 = None
+    p3_override = None
+    brain_mask_override = None
+    if config.tissue_backend == "ants-atropos":
+        layout = BIDSLayout(config.bids_dir)
+        raw_t1 = layout.raw_t1(subject, session)
+        if raw_t1 is None:
+            raise FileNotFoundError(f"Missing raw T1w required for ANTs Atropos segmentation: sub-{subject} ses-{session}")
+        brain_mask = layout.brain_mask(subject, session)
+        if brain_mask is None and Path(t1_path).resolve() == Path(raw_t1).resolve():
+            raise FileNotFoundError(
+                f"Missing skull-stripped T1w or brain mask required to seed ANTs Atropos: sub-{subject} ses-{session}"
+            )
+        atropos_mask = build_brain_csf_seed_mask(config, subject, session, t1_path, raw_t1, brain_mask)
+        precomputed_tissue_t1 = segment_t1_atropos(config, subject, session, raw_t1, atropos_mask)
+        p3_override = atropos_pve_path(config, subject, session, 3)
+    elif config.tissue_backend == "freesurfer":
+        layout = BIDSLayout(config.bids_dir)
+        raw_t1 = layout.raw_t1(subject, session)
+        if raw_t1 is None:
+            raise FileNotFoundError(f"Missing raw T1w required for FreeSurfer recon-all: sub-{subject} ses-{session}")
+        precomputed_tissue_t1 = segment_t1_freesurfer(config, subject, session, raw_t1, raw_t1_path=raw_t1)
+        t1_path = freesurfer_brain_path(config, subject, session)
+        brain_mask_override = freesurfer_brain_mask_path(config, subject, session)
+        p3_override = freesurfer_pve_path(config, subject, session, 3)
+
+    anat = prepare_anatomical(config, subject, session, t1_path, p3_override=p3_override, brain_mask_override=brain_mask_override)
     mrsi = run_mrsi_workflow(config, subject, session, inputs)
     registration = run_registration_workflow(config, subject, session, mrsi.reference, anat.registration_t1w, anat.registration_mask)
     tissue = run_tissue_workflow(
@@ -81,6 +115,7 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
         anat.registration_mask,
         mrsi.reference,
         registration.mrsi_to_t1.inverse,
+        precomputed_tissue_t1=precomputed_tissue_t1,
     )
 
     corrected_maps = mrsi.preproc_maps

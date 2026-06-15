@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from mrsiprep.interfaces.ants import apply_transforms
+from mrsiprep.interfaces.chimera import run_chimera
+from mrsiprep.interfaces.freesurfer import freesurfer_subject_id, run_recon_all, subject_dir_valid
 from mrsiprep.io.bids import BIDSLayout
 from mrsiprep.io.naming import parcellation_derivative
 from mrsiprep.parcellation.base import ParcellationResult
@@ -15,8 +17,23 @@ def run_chimera_parcellation(config, subject: str, session: str | None, mrsi_ref
     layout = BIDSLayout(config.bids_dir)
     source_atlas = layout.chimera_atlas(subject, session, config.chimera_scheme, config.chimera_scale, config.chimera_grow, space="orig")
     if source_atlas is None:
-        raise FileNotFoundError(
-            f"Chimera atlas not found for sub-{subject} ses-{session} scheme={config.chimera_scheme} scale={config.chimera_scale}."
+        raw_t1 = layout.raw_t1(subject, session)
+        if raw_t1 is None:
+            raise FileNotFoundError(f"Missing raw T1w required for Chimera: sub-{subject} ses-{session}")
+        fs_subject = freesurfer_subject_id(raw_t1)
+        if not subject_dir_valid(config.freesurfer_dir, fs_subject):
+            run_recon_all(raw_t1, config.freesurfer_dir, fs_subject, force=False, nthreads=config.nthreads)
+        source_atlas = run_chimera(
+            config.bids_dir,
+            config.output_dir,
+            config.freesurfer_dir,
+            raw_t1,
+            subject,
+            session,
+            config.chimera_scheme,
+            config.chimera_scale,
+            config.chimera_grow,
+            config.nthreads,
         )
     scale = f"scale{config.chimera_scale}"
     atlas_name = f"chimera{config.chimera_scheme}"

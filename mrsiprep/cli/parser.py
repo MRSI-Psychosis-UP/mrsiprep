@@ -24,12 +24,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--linewidth-max", type=float, default=QUALITY_DEFAULTS["linewidth_max"])
     parser.add_argument("--crlb-max", type=float, default=QUALITY_DEFAULTS["crlb_max"])
 
-    parser.add_argument("--tissue-backend", choices=["existing", "ants-atropos", "fast", "freesurfer"], default="existing")
+    parser.add_argument("--tissue-backend", choices=["freesurfer", "existing", "ants-atropos", "fast"], default="freesurfer")
     parser.add_argument("--registration-backend", choices=["ants"], default="ants")
     parser.add_argument("--normalization", choices=["simple", "ants-syn", "existing"], default="simple")
     parser.add_argument("--output-spaces", nargs="+", default=["T1w", "MNI152NLin2009cAsym"])
     parser.add_argument("--registration-t1-target", choices=["brain-csf", "brain", "raw"], default="brain-csf")
     parser.add_argument("--csf-pv-threshold", type=float, default=0.95)
+    parser.add_argument("--atropos-mask-dilation-mm", type=float, default=4.0)
     parser.add_argument("--ref-met", default="CrPCr")
     parser.add_argument("--t1", dest="t1_pattern", default="desc-brain_T1w")
 
@@ -40,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--atlas", default="schaefer200")
     parser.add_argument("--custom-atlas", type=Path, default=None)
     parser.add_argument("--custom-atlas-lut", type=Path, default=None)
+    parser.add_argument("--fs-subjects-dir", type=Path, default=None)
     parser.add_argument("--extraction-mode", choices=["hard", "soft"], default="hard")
 
     parser.add_argument("--write-connectivity", action="store_true")
@@ -89,6 +91,7 @@ def parse_args(argv: list[str] | None = None) -> MRSIPrepConfig:
         output_spaces=args.output_spaces,
         registration_t1_target=args.registration_t1_target,
         csf_pv_threshold=args.csf_pv_threshold,
+        atropos_mask_dilation_mm=args.atropos_mask_dilation_mm,
         ref_met=args.ref_met,
         t1_pattern=args.t1_pattern,
         parcellation_mode=args.parcellation_mode,
@@ -98,6 +101,7 @@ def parse_args(argv: list[str] | None = None) -> MRSIPrepConfig:
         atlas=args.atlas,
         custom_atlas=args.custom_atlas,
         custom_atlas_lut=args.custom_atlas_lut,
+        fs_subjects_dir=args.fs_subjects_dir,
         extraction_mode=args.extraction_mode,
         write_connectivity=args.write_connectivity,
         connectivity_method=args.connectivity_method,

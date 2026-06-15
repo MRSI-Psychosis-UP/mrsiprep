@@ -12,6 +12,10 @@ from mrsiprep.io.naming import anat_derivative
 from mrsiprep.utils.images import save_nifti
 
 
+def atropos_pve_path(config, subject: str, session: str | None, index: int) -> Path:
+    return anat_derivative(config.derivative_dir, subject, session, desc=f"p{index}")
+
+
 def segment_t1_atropos(config, subject: str, session: str | None, t1_path: Path, brain_mask: Path | None = None) -> dict[str, Path]:
     ants = _import_ants()
     outputs = {
@@ -19,7 +23,12 @@ def segment_t1_atropos(config, subject: str, session: str | None, t1_path: Path,
         "WM": anat_derivative(config.derivative_dir, subject, session, space="T1w", label="WM", suffix_override="probseg"),
         "CSF": anat_derivative(config.derivative_dir, subject, session, space="T1w", label="CSF", suffix_override="probseg"),
     }
-    if all(path.exists() for path in outputs.values()) and not config.overwrite:
+    pve_outputs = {
+        "GM": atropos_pve_path(config, subject, session, 1),
+        "WM": atropos_pve_path(config, subject, session, 2),
+        "CSF": atropos_pve_path(config, subject, session, 3),
+    }
+    if all(path.exists() for path in [*outputs.values(), *pve_outputs.values()]) and not config.overwrite:
         return outputs
 
     image = ants.image_read(str(t1_path))
@@ -45,7 +54,9 @@ def segment_t1_atropos(config, subject: str, session: str | None, t1_path: Path,
         label = label_for_idx.get(idx)
         if label is None:
             continue
-        save_nifti(prob_img.numpy().astype(np.float32), ref, outputs[label], dtype=np.float32)
-    if not all(path.exists() for path in outputs.values()):
-        raise ANTsError("Atropos did not produce all GM/WM/CSF probability maps.")
+        data = prob_img.numpy().astype(np.float32)
+        save_nifti(data, ref, outputs[label], dtype=np.float32)
+        save_nifti(data, ref, pve_outputs[label], dtype=np.float32)
+    if not all(path.exists() for path in [*outputs.values(), *pve_outputs.values()]):
+        raise ANTsError("Atropos did not produce all GM/WM/CSF and p1/p2/p3 probability maps.")
     return outputs

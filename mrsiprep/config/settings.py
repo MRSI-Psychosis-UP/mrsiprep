@@ -22,12 +22,13 @@ class MRSIPrepConfig:
     snr_min: float = QUALITY_DEFAULTS["snr_min"]
     linewidth_max: float = QUALITY_DEFAULTS["linewidth_max"]
     crlb_max: float = QUALITY_DEFAULTS["crlb_max"]
-    tissue_backend: str = "existing"
+    tissue_backend: str = "freesurfer"
     registration_backend: str = "ants"
     normalization: str = "simple"
     output_spaces: list[str] = field(default_factory=lambda: ["T1w", "MNI152NLin2009cAsym"])
     registration_t1_target: str = "brain-csf"
     csf_pv_threshold: float = 0.95
+    atropos_mask_dilation_mm: float = 4.0
     parcellation_mode: str = "chimera"
     chimera_scheme: str = "LFMIHIFIS"
     chimera_scale: int = 3
@@ -35,6 +36,7 @@ class MRSIPrepConfig:
     atlas: str = "schaefer200"
     custom_atlas: Path | None = None
     custom_atlas_lut: Path | None = None
+    fs_subjects_dir: Path | None = None
     write_connectivity: bool = False
     connectivity_method: str = "spearman"
     connectivity_space: str = "MRSI"
@@ -64,6 +66,8 @@ class MRSIPrepConfig:
             self.work_dir = self.output_dir / "work"
         else:
             self.work_dir = Path(self.work_dir).resolve()
+        if self.fs_subjects_dir is not None:
+            self.fs_subjects_dir = Path(self.fs_subjects_dir).resolve()
 
     @property
     def derivative_dir(self) -> Path:
@@ -72,6 +76,12 @@ class MRSIPrepConfig:
     @property
     def source_derivatives_dir(self) -> Path:
         return self.bids_dir / "derivatives"
+
+    @property
+    def freesurfer_dir(self) -> Path:
+        if self.fs_subjects_dir is not None:
+            return self.fs_subjects_dir
+        return self.output_dir / "freesurfer"
 
     def to_dict(self) -> dict:
         out = asdict(self)

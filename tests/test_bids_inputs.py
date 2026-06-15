@@ -25,6 +25,23 @@ class BIDSInputTests(unittest.TestCase):
             nib.save(img, skull / "sub-S001_ses-V1_desc-brain_T1w.nii.gz")
             for met in ["CrPCr", "GluGln", "GPCPCh", "NAANAAG", "Ins"]:
                 nib.save(img, mrsi / f"sub-S001_ses-V1_space-orig_met-{met}_desc-signal_mrsi.nii.gz")
-            cfg = MRSIPrepConfig(bids, tmp_path / "derivatives", "participant", participant_label=["S001"], session_label=["V1"])
+            cfg = MRSIPrepConfig(
+                bids,
+                tmp_path / "derivatives",
+                "participant",
+                participant_label=["S001"],
+                session_label=["V1"],
+                tissue_backend="existing",
+            )
             with self.assertRaisesRegex(Exception, "p3"):
                 validate_recording(cfg, "S001", "V1")
+
+            cfg_fs = MRSIPrepConfig(
+                bids,
+                tmp_path / "derivatives",
+                "participant",
+                participant_label=["S001"],
+                session_label=["V1"],
+                tissue_backend="freesurfer",
+            )
+            validate_recording(cfg_fs, "S001", "V1")

@@ -12,3 +12,8 @@ derivatives/cat12/sub-<id>/ses-<id>/*_desc-p2_T1w.nii.gz
 derivatives/cat12/sub-<id>/ses-<id>/*_desc-p3_T1w.nii.gz
 derivatives/skullstrip/sub-<id>/ses-<id>/*_desc-brain_T1w.nii.gz
 ```
+
+CAT12 and skullstrip derivatives are required only for `--tissue-backend
+existing`. The default `--tissue-backend freesurfer` requires raw BIDS T1w
+images and a valid FreeSurfer installation/license, then writes the tissue and
+skullstrip derivatives itself.

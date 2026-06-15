@@ -22,19 +22,26 @@ class AnatomicalResult:
     target_kind: str
 
 
-def prepare_anatomical(config, subject: str, session: str | None, t1_path: Path) -> AnatomicalResult:
+def prepare_anatomical(
+    config,
+    subject: str,
+    session: str | None,
+    t1_path: Path,
+    p3_override: Path | None = None,
+    brain_mask_override: Path | None = None,
+) -> AnatomicalResult:
     layout = BIDSLayout(config.bids_dir)
     raw_t1 = layout.raw_t1(subject, session)
-    brain_mask = layout.brain_mask(subject, session)
+    brain_mask = brain_mask_override or layout.brain_mask(subject, session)
     registration_t1 = t1_path
     registration_mask = brain_mask
     target_kind = config.registration_t1_target
 
     if target_kind == "brain-csf":
-        p3 = layout.cat12_probseg(subject, session, 3)
+        p3 = p3_override or layout.cat12_probseg(subject, session, 3)
         if not p3:
             raise FileNotFoundError(
-                f"Missing CAT12 p3 CSF map required for brain-csf target: sub-{subject} ses-{session}"
+                f"Missing p3 CSF map required for brain-csf target: sub-{subject} ses-{session}"
             )
         if raw_t1 is None:
             raise FileNotFoundError(
