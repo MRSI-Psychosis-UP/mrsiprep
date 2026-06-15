@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import nibabel as nib
 import numpy as np
 import pandas as pd
 
 from mrsiprep.io.naming import parcellation_derivative
 from mrsiprep.parcellation.base import ParcellationResult
+from mrsiprep.utils.images import load_3d_data
 from mrsiprep.utils.tables import read_labels, write_tsv
 
 
@@ -27,7 +27,7 @@ def extract_regional_metabolites(
 ) -> Path:
     out = parcellation_derivative(config.derivative_dir, subject, session, space="MRSI", atlas=parcels.atlas_name, scale=parcels.scale, desc="regional_metabolites", suffix_override="tsv")
     labels_df = read_labels(parcels.labels)
-    atlas_data = nib.load(str(parcels.atlas_mrsi)).get_fdata().astype(int)
+    atlas_data = load_3d_data(parcels.atlas_mrsi, dtype=np.float32, label="MRSI atlas")[1].astype(int)
     snr = _load_optional(snr_map)
     linewidth = _load_optional(linewidth_map)
     tissue = {label: _load_optional(path) for label, path in tissue_mrsi.items()}
@@ -38,8 +38,8 @@ def extract_regional_metabolites(
         if not np.any(parcel_mask):
             continue
         for met, path in metabolite_maps.items():
-            data = nib.load(str(path)).get_fdata()
-            qmask = nib.load(str(qcmasks[met])).get_fdata().astype(bool) if met in qcmasks else np.isfinite(data)
+            data = load_3d_data(path, dtype=np.float32, label=f"{met} map")[1]
+            qmask = load_3d_data(qcmasks[met], dtype=np.float32, label=f"{met} QC mask")[1].astype(bool) if met in qcmasks else np.isfinite(data)
             valid = parcel_mask & qmask & np.isfinite(data)
             values = data[valid]
             weights = snr[valid] if snr is not None else np.ones_like(values)
@@ -86,7 +86,7 @@ def _load_optional(path):
     path = Path(path)
     if not path.exists():
         return None
-    return nib.load(str(path)).get_fdata()
+    return load_3d_data(path, dtype=np.float32)[1]
 
 
 def _masked_mean(data, mask):

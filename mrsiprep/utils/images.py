@@ -13,6 +13,14 @@ def load_data(path: str | Path, dtype=np.float32) -> tuple[nib.Nifti1Image, np.n
     return img, np.asanyarray(img.dataobj).astype(dtype)
 
 
+def load_3d_data(path: str | Path, dtype=np.float32, label: str = "image") -> tuple[nib.Nifti1Image, np.ndarray]:
+    img, data = load_data(path, dtype=dtype)
+    data = np.squeeze(data)
+    if data.ndim != 3:
+        raise ValueError(f"Expected 3D {label}, got shape {data.shape}: {path}")
+    return img, data
+
+
 def save_nifti(data: np.ndarray, reference: nib.Nifti1Image | str | Path, out_path: str | Path, dtype=None) -> Path:
     if isinstance(reference, nib.Nifti1Image):
         ref_img = reference

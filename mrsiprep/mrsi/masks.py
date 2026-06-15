@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import nibabel as nib
 import numpy as np
 
 from mrsiprep.io.naming import mrsi_derivative
-from mrsiprep.utils.images import save_nifti
+from mrsiprep.utils.images import load_3d_data, save_nifti
 
 
 def ensure_brainmask(config, subject: str, session: str | None, existing: Path | None, water_map: Path | None, metabolite_maps: dict[str, Path]) -> Path:
@@ -18,13 +17,14 @@ def ensure_brainmask(config, subject: str, session: str | None, existing: Path |
     if out.exists() and not config.overwrite:
         return out
     if water_map and water_map.exists():
-        ref = nib.load(str(water_map))
-        mask = ref.get_fdata() > 0
+        ref, data = load_3d_data(water_map, dtype=np.float32, label="water map")
+        mask = data > 0
     elif metabolite_maps:
-        first = nib.load(str(next(iter(metabolite_maps.values()))))
+        first, first_data = load_3d_data(next(iter(metabolite_maps.values())), dtype=np.float32, label="metabolite map")
         mask = np.zeros(first.shape[:3], dtype=bool)
+        mask |= np.isfinite(first_data) & (first_data > 0)
         for path in metabolite_maps.values():
-            data = nib.load(str(path)).get_fdata()
+            _, data = load_3d_data(path, dtype=np.float32, label="metabolite map")
             mask |= np.isfinite(data) & (data > 0)
         ref = first
     else:
