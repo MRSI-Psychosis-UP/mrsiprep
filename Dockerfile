@@ -18,6 +18,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bc \
         ca-certificates \
+        libgfortran5 \
         libgomp1 \
         libgl1 \
         libglib2.0-0 \
