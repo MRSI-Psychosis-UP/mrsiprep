@@ -62,7 +62,7 @@ def segment_t1_freesurfer(config, subject: str, session: str | None, t1_path: Pa
         raw_t1,
         config.freesurfer_dir,
         fs_subject,
-        force=config.overwrite,
+        force=config.overwrite_freesurfer,
         nthreads=config.nthreads,
     )
     _write_native_brain_derivatives(config, subject, session, raw_t1, fs_dir)

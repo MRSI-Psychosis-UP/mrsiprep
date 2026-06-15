@@ -62,10 +62,12 @@ def run_recon_all(t1_path: str | Path, fs_subjects_dir: str | Path, subject: str
     require_command("recon-all")
     check_license()
     fs_subjects_dir = Path(fs_subjects_dir)
-    if subject_dir_valid(fs_subjects_dir, subject) and not force:
-        return fs_subjects_dir / subject
-    fs_subjects_dir.mkdir(parents=True, exist_ok=True)
     subject_root = fs_subjects_dir / subject
+    if force and subject_root.exists():
+        shutil.rmtree(subject_root)
+    if subject_dir_valid(fs_subjects_dir, subject) and not force:
+        return subject_root
+    fs_subjects_dir.mkdir(parents=True, exist_ok=True)
     if subject_root.exists() and not force:
         cmd = ["recon-all", "-s", subject, "-all", "-sd", str(fs_subjects_dir), "-openmp", str(nthreads)]
     else:

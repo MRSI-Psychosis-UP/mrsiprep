@@ -23,6 +23,7 @@ RUN apt-get update \
         libgl1 \
         libglib2.0-0 \
         libglu1-mesa \
+        libquadmath0 \
         libx11-6 \
         libxext6 \
         libxmu6 \

@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--overwrite-t1-reg", action="store_true")
     parser.add_argument("--overwrite-mni-reg", action="store_true")
     parser.add_argument("--overwrite-transform", action="store_true")
+    parser.add_argument("--overwrite-freesurfer", action="store_true", help="Delete and rerun the FreeSurfer subject directory for each processed recording.")
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser
 
@@ -120,6 +121,7 @@ def parse_args(argv: list[str] | None = None) -> MRSIPrepConfig:
         overwrite_t1_reg=args.overwrite_t1_reg,
         overwrite_mni_reg=args.overwrite_mni_reg,
         overwrite_transform=args.overwrite_transform,
+        overwrite_freesurfer=args.overwrite_freesurfer,
         verbose=args.verbose,
     )
 

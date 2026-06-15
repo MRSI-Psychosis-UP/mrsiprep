@@ -56,6 +56,7 @@ class MRSIPrepConfig:
     overwrite_t1_reg: bool = False
     overwrite_mni_reg: bool = False
     overwrite_transform: bool = False
+    overwrite_freesurfer: bool = False
     work_dir: Path | None = None
     verbose: bool = False
 

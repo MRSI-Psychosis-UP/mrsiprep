@@ -17,6 +17,16 @@ class CLITests(unittest.TestCase):
         self.assertEqual(cfg.tissue_backend, "ants-atropos")
 
     def test_cli_freesurfer_option(self):
-        cfg = parse_args(["/tmp/bids", "/tmp/out", "participant", "--tissue-backend", "freesurfer", "--fs-subjects-dir", "/tmp/fs"])
+        cfg = parse_args([
+            "/tmp/bids",
+            "/tmp/out",
+            "participant",
+            "--tissue-backend",
+            "freesurfer",
+            "--fs-subjects-dir",
+            "/tmp/fs",
+            "--overwrite-freesurfer",
+        ])
         self.assertEqual(cfg.tissue_backend, "freesurfer")
         self.assertEqual(cfg.freesurfer_dir, Path("/tmp/fs"))
+        self.assertTrue(cfg.overwrite_freesurfer)
