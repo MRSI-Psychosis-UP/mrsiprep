@@ -35,7 +35,7 @@ continues with the next item.
 Build the local image:
 
 ```bash
-docker build -t mrsiprep:latest /home/flucchetti/Connectome/Dev/mrsiprep
+docker build -t mrsiprep:latest .
 ```
 
 Run it like fMRIPrep:
@@ -90,6 +90,5 @@ The import helpers preserve the MRSI-Metabolic-Connectome derivative layout:
 
 ## Attribution
 
-Substantial implementation logic is cropped and refactored from
-`MRSI-Metabolic-Connectome` by Federico Lucchetti and collaborators. The original
+Substantial implementation logic is cropped and refactored by Federico Lucchetti and Edgar Céléreau. The original
 license is included in `LICENSE`.

@@ -46,7 +46,16 @@ def freesurfer_subject_id(t1_path: str | Path) -> str:
 
 def subject_dir_valid(fs_subjects_dir: str | Path, subject: str) -> bool:
     root = Path(fs_subjects_dir) / subject
-    return (root / "mri").exists() and (root / "surf").exists()
+    required = [
+        root / "mri" / "brain.mgz",
+        root / "mri" / "aseg.mgz",
+        root / "mri" / "orig.mgz",
+        root / "surf" / "lh.white",
+        root / "surf" / "rh.white",
+        root / "surf" / "lh.pial",
+        root / "surf" / "rh.pial",
+    ]
+    return all(path.exists() for path in required)
 
 
 def run_recon_all(t1_path: str | Path, fs_subjects_dir: str | Path, subject: str, force: bool = False, nthreads: int = 4) -> Path:
@@ -56,8 +65,17 @@ def run_recon_all(t1_path: str | Path, fs_subjects_dir: str | Path, subject: str
     if subject_dir_valid(fs_subjects_dir, subject) and not force:
         return fs_subjects_dir / subject
     fs_subjects_dir.mkdir(parents=True, exist_ok=True)
-    cmd = ["recon-all", "-s", subject, "-i", str(t1_path), "-all", "-sd", str(fs_subjects_dir), "-openmp", str(nthreads)]
+    subject_root = fs_subjects_dir / subject
+    if subject_root.exists() and not force:
+        cmd = ["recon-all", "-s", subject, "-all", "-sd", str(fs_subjects_dir), "-openmp", str(nthreads)]
+    else:
+        cmd = ["recon-all", "-s", subject, "-i", str(t1_path), "-all", "-sd", str(fs_subjects_dir), "-openmp", str(nthreads)]
     subprocess.run(cmd, check=True)
+    if not subject_dir_valid(fs_subjects_dir, subject):
+        raise FreeSurferError(
+            f"recon-all finished but required outputs are missing for {subject}: "
+            f"{fs_subjects_dir / subject}"
+        )
     return fs_subjects_dir / subject
 
 

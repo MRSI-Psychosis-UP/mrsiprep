@@ -14,14 +14,10 @@ ENV FREESURFER_HOME=/usr/local/freesurfer \
     MPLBACKEND=Agg \
     PATH=/usr/local/freesurfer/bin:/usr/local/freesurfer/fsfast/bin:/usr/local/freesurfer/tktools:/usr/local/freesurfer/mni/bin:$PATH
 
-COPY --from=freesurfer /usr/local/freesurfer /usr/local/freesurfer
-
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bc \
-        build-essential \
         ca-certificates \
-        git \
         libgomp1 \
         libgl1 \
         libglib2.0-0 \
@@ -32,9 +28,9 @@ RUN apt-get update \
         libxt6 \
         perl \
         tcsh \
-        tk \
-        xvfb \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=freesurfer /usr/local/freesurfer /usr/local/freesurfer
 
 WORKDIR /opt/mrsiprep
 COPY pyproject.toml README.md LICENSE ./
