@@ -5,6 +5,9 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import time
+import os
+from contextlib import contextmanager
 from pathlib import Path
 
 import nibabel as nib
@@ -19,6 +22,12 @@ def _import_ants():
         import ants  # type: ignore
     except Exception as exc:
         raise ANTsError("antspyx is required for this operation. Install mrsiprep[ants] or provide existing transforms.") from exc
+    required = ("image_read", "registration", "apply_transforms")
+    if not all(hasattr(ants, name) for name in required):
+        raise ANTsError(
+            "The installed 'ants' module is not antspyx or is incomplete. "
+            "Install antspyx, or use the ANTs CLI-backed registration path."
+        )
     return ants
 
 
@@ -42,20 +51,46 @@ def _load_ants_image(image):
     raise ANTsError("Image must be a path, nibabel image, or ANTsImage.")
 
 
-def register(fixed, moving, out_prefix: str | Path, transform: str = "sr", fixed_mask=None, moving_mask=None, verbose: bool = False) -> dict:
+@contextmanager
+def _itk_thread_env(threads: int | None):
+    if threads is None:
+        yield
+        return
+    previous = os.environ.get("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS")
+    os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(max(1, int(threads)))
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS", None)
+        else:
+            os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = previous
+
+
+def register(
+    fixed,
+    moving,
+    out_prefix: str | Path,
+    transform: str = "sr",
+    fixed_mask=None,
+    moving_mask=None,
+    verbose: bool = False,
+    threads: int | None = None,
+) -> dict:
     ants = _import_ants()
     fixed_img = _load_ants_image(fixed)
     moving_img = _load_ants_image(moving)
     fixed_mask_img = _load_ants_image(fixed_mask) if fixed_mask is not None else None
     moving_mask_img = _load_ants_image(moving_mask) if moving_mask is not None else None
-    tx = ants.registration(
-        fixed=fixed_img,
-        moving=moving_img,
-        fixed_mask=fixed_mask_img,
-        moving_mask=moving_mask_img,
-        type_of_transform=f"antsRegistrationSyN[{transform}]",
-        verbose=verbose,
-    )
+    with _itk_thread_env(threads):
+        tx = ants.registration(
+            fixed=fixed_img,
+            moving=moving_img,
+            fixed_mask=fixed_mask_img,
+            moving_mask=moving_mask_img,
+            type_of_transform=f"antsRegistrationSyN[{transform}]",
+            verbose=verbose,
+        )
     return save_all_transforms(tx, out_prefix)
 
 
@@ -86,20 +121,74 @@ def save_all_transforms(ants_tx: dict, out_prefix: str | Path) -> dict[str, list
     return outputs
 
 
-def apply_transforms(fixed, moving, transforms: list[str | Path], out_path: str | Path | None = None, interpolation: str = "linear"):
+def apply_transforms(
+    fixed,
+    moving,
+    transforms: list[str | Path],
+    out_path: str | Path | None = None,
+    interpolation: str = "linear",
+    threads: int | None = None,
+):
     ants = _import_ants()
     existing = [str(Path(path)) for path in transforms if Path(path).exists()]
     if not existing:
         raise ANTsError(f"No transform files exist in list: {transforms}")
     fixed_img = _load_ants_image(fixed)
     moving_img = _load_ants_image(moving)
-    warped = ants.apply_transforms(fixed=fixed_img, moving=moving_img, transformlist=existing, interpolator=interpolation)
+    with _itk_thread_env(threads):
+        warped = ants.apply_transforms(fixed=fixed_img, moving=moving_img, transformlist=existing, interpolator=interpolation)
     if out_path is None:
         return warped
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     ants.image_write(warped, str(out_path))
     return out_path
+
+
+class Registration:
+    """Small ANTs registration facade matching the mrsitoolbox workflow API."""
+
+    def register(
+        self,
+        fixed_input,
+        moving_input,
+        fixed_mask=None,
+        moving_mask=None,
+        transform: str = "sr",
+        verbose: bool = False,
+        threads: int | None = None,
+    ):
+        ants = _import_ants()
+        fixed_image = _load_ants_image(fixed_input)
+        moving_image = _load_ants_image(moving_input)
+        fixed_mask_image = _load_ants_image(fixed_mask) if fixed_mask is not None else None
+        moving_mask_image = _load_ants_image(moving_mask) if moving_mask is not None else None
+        start = time.time()
+        with _itk_thread_env(threads):
+            tx = ants.registration(
+                fixed=fixed_image,
+                moving=moving_image,
+                fixed_mask=fixed_mask_image,
+                moving_mask=moving_mask_image,
+                verbose=verbose,
+                type_of_transform=f"antsRegistrationSyN[{transform}]",
+            )
+        return tx, round(time.time() - start, 1)
+
+    def transform(self, fixed_image, moving_image, transform, interpolator_mode: str = "linear", threads: int | None = None):
+        ants = _import_ants()
+        fixed = _load_ants_image(fixed_image)
+        moving = _load_ants_image(moving_image)
+        with _itk_thread_env(threads):
+            return ants.apply_transforms(
+                fixed=fixed,
+                moving=moving,
+                transformlist=[str(path) for path in transform],
+                interpolator=interpolator_mode,
+            )
+
+    def save_all_transforms(self, ants_transform_list: dict, dir_prefix_path: str | Path) -> dict[str, list[Path]]:
+        return save_all_transforms(ants_transform_list, dir_prefix_path)
 
 
 def require_cli(command: str) -> str:
@@ -109,5 +198,16 @@ def require_cli(command: str) -> str:
     return path
 
 
-def run_cli(cmd: list[str], verbose: bool = False) -> None:
-    subprocess.run(cmd, check=True, stdout=None if verbose else subprocess.PIPE, stderr=None if verbose else subprocess.PIPE, text=True)
+def run_cli(cmd: list[str], verbose: bool = False, threads: int | None = None) -> None:
+    env = None
+    if threads is not None:
+        env = os.environ.copy()
+        env["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(max(1, int(threads)))
+    subprocess.run(
+        cmd,
+        check=True,
+        stdout=None if verbose else subprocess.PIPE,
+        stderr=None if verbose else subprocess.PIPE,
+        text=True,
+        env=env,
+    )
