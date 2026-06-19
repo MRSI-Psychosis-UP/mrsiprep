@@ -6,8 +6,9 @@ quantified whole-brain MRSI maps. It is derived from the implementation in
 research license.
 
 The package does not perform spectral fitting. It expects quantified MRSI maps,
-quality maps, and T1w images. By default it runs FreeSurfer `recon-all` to
-create the skull-stripped T1w image and GM/WM/CSF tissue maps needed downstream.
+quality maps, and T1w images. By default it uses SynthSeg plus FSL FAST to
+create GM/WM/CSF partial-volume tissue maps, with HD-BET and SynthSeg
+CSF/ventricle labels defining the FAST working mask.
 
 ## Minimal command
 
@@ -15,9 +16,20 @@ create the skull-stripped T1w image and GM/WM/CSF tissue maps needed downstream.
 mrsiprep /path/to/bids /path/to/derivatives participant \
   --participant-label S001 \
   --session-label V1 \
+  --validate-only
+```
+
+Use `--validate-only` to check all selected subject/session inputs before
+starting an expensive batch run. It reports invalid recordings and exits without
+running SynthSeg, HD-BET, FAST, registration, parcellation, or PVC.
+
+```bash
+mrsiprep /path/to/bids /path/to/derivatives participant \
+  --participant-label S001 \
+  --session-label V1 \
   --metabolites CrPCr GluGln GPCPCh NAANAAG Ins \
   --registration-t1-target brain-csf \
-  --tissue-backend freesurfer \
+  --tissue-backend synthseg-fast \
   --parcellation-mode chimera \
   --chimera-scheme LFMIHIFIS \
   --chimera-scale 3
@@ -25,10 +37,11 @@ mrsiprep /path/to/bids /path/to/derivatives participant \
 
 The default registration target is `brain-csf`, which adds the `p3` CSF layer to
 the skull-stripped T1w image before MRSI-to-T1 registration. With the default
-FreeSurfer backend, `p1/p2/p3` are derived from `recon-all` outputs. With
-`--tissue-backend existing`, precomputed CAT12 `p1/p2/p3` maps are required; if
-they are missing, the current subject/session fails and batch processing
-continues with the next item.
+SynthSeg+FAST backend, SynthSeg contributes CSF/ventricle labels, HD-BET
+contributes the brain mask, and FAST estimates partial-volume `p1/p2/p3` maps.
+With `--tissue-backend existing`, precomputed CAT12-style `p1/p2/p3` maps are
+required; if they are missing, the current subject/session fails and batch
+processing continues with the next item.
 
 ## Docker / BIDS App usage
 
@@ -44,13 +57,11 @@ Run it like fMRIPrep:
 docker run --rm \
   -v /path/to/bids:/data:ro \
   -v /path/to/bids/derivatives:/out \
-  -v /path/to/freesurfer/license.txt:/opt/freesurfer/license.txt:ro \
-  -e FS_LICENSE=/opt/freesurfer/license.txt \
   mrsiprep:latest \
   /data /out participant \
   --participant-label S001 \
   --session-label V1 \
-  --tissue-backend freesurfer \
+  --tissue-backend synthseg-fast \
   --registration-t1-target brain-csf
 ```
 
@@ -60,22 +71,33 @@ For the dummy dataset on this workstation:
 docker run --rm \
   -v /home/flucchetti/Connectome/BIDS/Dummy-Project:/data:ro \
   -v /home/flucchetti/Connectome/BIDS/Dummy-Project/derivatives:/out \
-  -v "${FS_LICENSE}:/opt/freesurfer/license.txt:ro" \
-  -e FS_LICENSE=/opt/freesurfer/license.txt \
   mrsiprep:latest \
   /data /out participant \
   --participant-label CHUVUP013 \
   --session-label V1 \
-  --tissue-backend freesurfer \
+  --tissue-backend synthseg-fast \
   --registration-t1-target brain-csf \
   --parcellation-mode mni \
   --verbose
 ```
 
-FreeSurfer intermediates are kept under `/out/freesurfer`. MRSIPrep also writes
-native T1-space derivatives from those intermediates, including
-`desc-brain_T1w`, `desc-brain_mask`, `desc-p1_T1w`, `desc-p2_T1w`, and
-`desc-p3_T1w`.
+SynthSeg+FAST intermediates are kept under the configured work directory.
+MRSIPrep writes native T1-space derivatives including GM/WM/CSF probsegs and
+`desc-p1_T1w`, `desc-p2_T1w`, and `desc-p3_T1w`.
+
+MRSIPrep outputs are grouped by processing space:
+
+```text
+<out>/mrsiprep/sub-*/ses-*/mrsi-orig/      native/imported-grid MRSI signal maps
+<out>/mrsiprep/sub-*/ses-*/mrsi-orig-pvc/  PVC-corrected native-grid maps
+<out>/mrsiprep/sub-*/ses-*/mrsi-t1w/       T1w-aligned MRSI maps
+<out>/mrsiprep/sub-*/ses-*/mrsi-mni/       MNI-normalized MRSI maps
+<out>/mrsiprep/sub-*/ses-*/tissue-mrsi/    MRSI-grid tissue probsegs and 4Dtissue
+<out>/mrsiprep/sub-*/ses-*/qmasks/         QC, spike, and brain masks
+<out>/mrsiprep/sub-*/ses-*/anat/           T1w tissue and registration files
+<out>/chimera-atlases/sub-*/ses-*/anat/    Chimera atlas outputs
+<out>/mrsiprep/sub-*/ses-*/connectomics/   matrices, nodes, and edges
+```
 
 ## BIDS import utilities
 

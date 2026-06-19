@@ -8,7 +8,7 @@ from mrsiprep.interfaces.ants import apply_transforms
 from mrsiprep.interfaces.chimera import run_chimera
 from mrsiprep.interfaces.freesurfer import freesurfer_subject_id, run_recon_all, subject_dir_valid
 from mrsiprep.io.bids import BIDSLayout
-from mrsiprep.io.naming import parcellation_derivative
+from mrsiprep.io.naming import chimera_derivative
 from mrsiprep.parcellation.base import ParcellationResult
 from mrsiprep.parcellation.labels import copy_labels
 
@@ -37,9 +37,9 @@ def run_chimera_parcellation(config, subject: str, session: str | None, mrsi_ref
         )
     scale = f"scale{config.chimera_scale}"
     atlas_name = f"chimera{config.chimera_scheme}"
-    t1_out = parcellation_derivative(config.derivative_dir, subject, session, space="T1w", atlas=atlas_name, scale=scale)
-    mrsi_out = parcellation_derivative(config.derivative_dir, subject, session, space="MRSI", atlas=atlas_name, scale=scale)
-    labels_out = parcellation_derivative(config.derivative_dir, subject, session, atlas=atlas_name, scale=scale, suffix_override="tsv")
+    t1_out = chimera_derivative(config.output_dir, subject, session, space="T1w", atlas=atlas_name, scale=scale)
+    mrsi_out = chimera_derivative(config.output_dir, subject, session, space="MRSI", atlas=atlas_name, scale=scale)
+    labels_out = chimera_derivative(config.output_dir, subject, session, atlas=atlas_name, scale=scale, suffix_override="tsv")
     if not t1_out.exists() or config.overwrite:
         import shutil
 

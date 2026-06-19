@@ -24,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--linewidth-max", type=float, default=QUALITY_DEFAULTS["linewidth_max"])
     parser.add_argument("--crlb-max", type=float, default=QUALITY_DEFAULTS["crlb_max"])
 
-    parser.add_argument("--tissue-backend", choices=["freesurfer", "existing", "ants-atropos", "fast"], default="freesurfer")
+    parser.add_argument("--tissue-backend", choices=["synthseg-fast", "freesurfer", "existing", "ants-atropos", "fast"], default="synthseg-fast")
     parser.add_argument("--registration-backend", choices=["ants"], default="ants")
     parser.add_argument("--normalization", choices=["simple", "ants-syn", "existing"], default="simple")
     parser.add_argument("--output-spaces", nargs="+", default=["T1w", "MNI152NLin2009cAsym"])
@@ -64,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--overwrite-mni-reg", action="store_true")
     parser.add_argument("--overwrite-transform", action="store_true")
     parser.add_argument("--overwrite-freesurfer", action="store_true", help="Delete and rerun the FreeSurfer subject directory for each processed recording.")
+    parser.add_argument("--validate-only", action="store_true", help="Check selected subject/session inputs and exit without running preprocessing.")
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser
 
@@ -122,6 +123,7 @@ def parse_args(argv: list[str] | None = None) -> MRSIPrepConfig:
         overwrite_mni_reg=args.overwrite_mni_reg,
         overwrite_transform=args.overwrite_transform,
         overwrite_freesurfer=args.overwrite_freesurfer,
+        validate_only=args.validate_only,
         verbose=args.verbose,
     )
 

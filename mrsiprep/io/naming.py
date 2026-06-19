@@ -26,11 +26,26 @@ def anat_derivative(root: Path, subject: str, session: str | None, **entities) -
 
 
 def mrsi_derivative(root: Path, subject: str, session: str | None, **entities) -> Path:
-    return _derivative(root, subject, session, "mrsi", "mrsi", **entities)
+    return _derivative(root, subject, session, _mrsi_folder(entities), "mrsi", **entities)
 
 
 def parcellation_derivative(root: Path, subject: str, session: str | None, **entities) -> Path:
     return _derivative(root, subject, session, "parcellations", "dseg", **entities)
+
+
+def chimera_derivative(root: Path, subject: str, session: str | None, **entities) -> Path:
+    sub_dir = root / "chimera-atlases" / f"sub-{normalize_subject(subject)}"
+    ses = normalize_session(session)
+    out_dir = sub_dir / f"ses-{ses}" / "anat" if ses else sub_dir / "anat"
+    suffix = entities.pop("suffix_override", "dseg")
+    name_parts = [prefix(subject, session)]
+    for key in ("space", "atlas", "scale", "desc"):
+        value = entities.get(key)
+        if value is not None:
+            value = _format_entity_value(key, value)
+            name_parts.append(f"{key}-{value}")
+    ext = f"_{suffix}.nii.gz" if suffix in {"dseg", "mask", "probseg"} else f".{suffix}"
+    return out_dir / ("_".join(name_parts) + ext)
 
 
 def connectome_derivative(root: Path, subject: str, session: str | None, suffix: str, **entities) -> Path:
@@ -39,6 +54,23 @@ def connectome_derivative(root: Path, subject: str, session: str | None, suffix:
 
 def figure_derivative(root: Path, subject: str, session: str | None, extension: str = "svg", **entities) -> Path:
     return _derivative(root, subject, session, "figures", extension, **entities)
+
+
+def _mrsi_folder(entities: dict) -> str:
+    desc = entities.get("desc")
+    suffix = entities.get("suffix_override")
+    space = entities.get("space")
+    if desc == "4Dtissue" or entities.get("label") in {"GM", "WM", "CSF"}:
+        return "tissue-mrsi"
+    if desc == "pvc":
+        return "mrsi-orig-pvc"
+    if desc in {"brain", "mrsiqc", "qcmask", "spikemask"} or suffix == "mask":
+        return "qmasks"
+    if space == "MNI152NLin2009cAsym":
+        return "mrsi-mni"
+    if space == "T1w":
+        return "mrsi-t1w"
+    return "mrsi-orig"
 
 
 def _derivative(root: Path, subject: str, session: str | None, folder: str, suffix: str, **entities) -> Path:
@@ -64,6 +96,7 @@ def _derivative(root: Path, subject: str, session: str | None, folder: str, suff
         if value is None:
             continue
         entity = "from" if key == "from_" else key
+        value = _format_entity_value(entity, value)
         name_parts.append(f"{entity}-{value}")
     ext = suffix if suffix.startswith(".") else f"_{suffix}.nii.gz" if suffix in {"T1w", "mrsi", "dseg", "mask", "probseg"} else f".{suffix}"
     if ext.startswith("_"):
@@ -71,6 +104,12 @@ def _derivative(root: Path, subject: str, session: str | None, folder: str, suff
     else:
         filename = "_".join(name_parts) + ext
     return out_dir / filename
+
+
+def _format_entity_value(entity: str, value) -> str:
+    if entity == "space" and value == "MRSI":
+        return "mrsi"
+    return str(value)
 
 
 def transform_path(root: Path, subject: str, session: str | None, from_space: str, to_space: str, desc: str | None = None, ext: str = ".h5") -> Path:

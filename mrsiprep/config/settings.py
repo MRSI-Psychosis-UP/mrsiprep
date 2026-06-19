@@ -22,7 +22,7 @@ class MRSIPrepConfig:
     snr_min: float = QUALITY_DEFAULTS["snr_min"]
     linewidth_max: float = QUALITY_DEFAULTS["linewidth_max"]
     crlb_max: float = QUALITY_DEFAULTS["crlb_max"]
-    tissue_backend: str = "freesurfer"
+    tissue_backend: str = "synthseg-fast"
     registration_backend: str = "ants"
     normalization: str = "simple"
     output_spaces: list[str] = field(default_factory=lambda: ["T1w", "MNI152NLin2009cAsym"])
@@ -59,6 +59,7 @@ class MRSIPrepConfig:
     overwrite_freesurfer: bool = False
     work_dir: Path | None = None
     verbose: bool = False
+    validate_only: bool = False
 
     def __post_init__(self) -> None:
         self.bids_dir = Path(self.bids_dir).resolve()

@@ -20,6 +20,11 @@ from mrsiprep.tissue.freesurfer import (
     segment_t1_freesurfer,
 )
 from mrsiprep.tissue.masks import build_brain_csf_seed_mask
+from mrsiprep.tissue.synthseg_fast import (
+    segment_t1_synthseg_fast,
+    synthseg_fast_brain_mask_path,
+    synthseg_fast_pve_path,
+)
 from mrsiprep.utils.logging import LOGGER
 from mrsiprep.utils.misc import normalize_session, normalize_subject, read_participant_pairs
 from mrsiprep.utils.provenance import write_provenance
@@ -72,6 +77,46 @@ def run_participant_workflow(config) -> list[RecordingStatus]:
     return statuses
 
 
+def validate_participant_inputs(config) -> list[RecordingStatus]:
+    statuses: list[RecordingStatus] = []
+    for recording in collect_recordings(config):
+        subject = normalize_subject(recording.subject)
+        session = normalize_session(recording.session)
+        try:
+            t1_path, inputs = validate_recording(config, subject, session)
+            _validate_backend_inputs(config, subject, session)
+            outputs = {
+                "t1w": t1_path,
+                "metabolites": sorted(inputs.metabolite_maps),
+                "snr": inputs.snr_map,
+                "linewidth": inputs.linewidth_map,
+                "brainmask": inputs.brainmask,
+            }
+            statuses.append(RecordingStatus(subject, session, "success", outputs=outputs))
+            LOGGER.info("VALID sub-%s%s", subject, f" ses-{session}" if session else "")
+        except Exception as exc:
+            statuses.append(RecordingStatus(subject, session, "failed", error=str(exc)))
+            LOGGER.error("INVALID sub-%s%s: %s", subject, f" ses-{session}" if session else "", exc)
+    return statuses
+
+
+def _validate_backend_inputs(config, subject: str, session: str | None) -> None:
+    layout = BIDSLayout(config.bids_dir)
+    raw_t1 = layout.raw_t1(subject, session)
+    if config.tissue_backend in {"synthseg-fast", "freesurfer"} and raw_t1 is None:
+        raise FileNotFoundError(f"Missing raw T1w required for {config.tissue_backend}: sub-{subject} ses-{session}")
+    if config.tissue_backend == "ants-atropos":
+        if raw_t1 is None:
+            raise FileNotFoundError(f"Missing raw T1w required for ANTs Atropos: sub-{subject} ses-{session}")
+        if layout.brain_mask(subject, session) is None and layout.t1(subject, session, config.t1_pattern) == raw_t1:
+            raise FileNotFoundError(f"Missing skull-stripped T1w or brain mask required for ANTs Atropos: sub-{subject} ses-{session}")
+    if config.parcellation_mode == "mni" and config.atlas == "custom":
+        if not config.custom_atlas or not config.custom_atlas.exists():
+            raise FileNotFoundError("--custom-atlas is required for --parcellation-mode mni --atlas custom")
+        if not config.custom_atlas_lut or not config.custom_atlas_lut.exists():
+            raise FileNotFoundError("--custom-atlas-lut is required for --parcellation-mode mni --atlas custom")
+
+
 def run_single_recording(config, subject: str, session: str | None) -> dict:
     subject = normalize_subject(subject)
     session = normalize_session(session)
@@ -103,6 +148,14 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
         t1_path = freesurfer_brain_path(config, subject, session)
         brain_mask_override = freesurfer_brain_mask_path(config, subject, session)
         p3_override = freesurfer_pve_path(config, subject, session, 3)
+    elif config.tissue_backend == "synthseg-fast":
+        layout = BIDSLayout(config.bids_dir)
+        raw_t1 = layout.raw_t1(subject, session)
+        if raw_t1 is None:
+            raise FileNotFoundError(f"Missing raw T1w required for SynthSeg+FAST segmentation: sub-{subject} ses-{session}")
+        precomputed_tissue_t1 = segment_t1_synthseg_fast(config, subject, session, raw_t1)
+        brain_mask_override = synthseg_fast_brain_mask_path(config, subject, session)
+        p3_override = synthseg_fast_pve_path(config, subject, session, 3)
 
     anat = prepare_anatomical(config, subject, session, t1_path, p3_override=p3_override, brain_mask_override=brain_mask_override)
     mrsi = run_mrsi_workflow(config, subject, session, inputs)
