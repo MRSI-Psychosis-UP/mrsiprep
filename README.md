@@ -45,18 +45,16 @@ processing continues with the next item.
 
 ## Docker / BIDS App usage
 
-Build the local image:
-
-```bash
-docker build -t mrsiprep:latest .
-```
-
-Run it like fMRIPrep:
+If you already have a local `mrsiprep:latest` image available, run it like fMRIPrep:
 
 ```bash
 docker run --rm \
   -v /path/to/bids:/data:ro \
   -v /path/to/bids/derivatives:/out \
+  -v /usr/local/freesurfer:/usr/local/freesurfer:ro \
+  -v /usr/local/freesurfer/license.txt:/opt/freesurfer/license.txt:ro \
+  -e FREESURFER_HOME=/usr/local/freesurfer \
+  -e FS_LICENSE=/opt/freesurfer/license.txt \
   mrsiprep:latest \
   /data /out participant \
   --participant-label S001 \
@@ -71,6 +69,10 @@ For the dummy dataset on this workstation:
 docker run --rm \
   -v /home/flucchetti/Connectome/BIDS/Dummy-Project:/data:ro \
   -v /home/flucchetti/Connectome/BIDS/Dummy-Project/derivatives:/out \
+  -v /usr/local/freesurfer:/usr/local/freesurfer:ro \
+  -v /usr/local/freesurfer/license.txt:/opt/freesurfer/license.txt:ro \
+  -e FREESURFER_HOME=/usr/local/freesurfer \
+  -e FS_LICENSE=/opt/freesurfer/license.txt \
   mrsiprep:latest \
   /data /out participant \
   --participant-label CHUVUP013 \
@@ -81,7 +83,22 @@ docker run --rm \
   --verbose
 ```
 
-SynthSeg+FAST intermediates are kept under the configured work directory.
+To verify the external binaries from inside the container:
+
+```bash
+docker run --rm \
+  -v /home/flucchetti/Connectome/BIDS/Dummy-Project:/data:ro \
+  -v /home/flucchetti/Connectome/BIDS/Dummy-Project/derivatives:/out \
+  -v /usr/local/freesurfer:/usr/local/freesurfer:ro \
+  -v /usr/local/freesurfer/license.txt:/opt/freesurfer/license.txt:ro \
+  -e FREESURFER_HOME=/usr/local/freesurfer \
+  -e FS_LICENSE=/opt/freesurfer/license.txt \
+  mrsiprep:latest \
+  /data /out participant \
+  --check-external-libs
+```
+
+For host-mounted FreeSurfer, the container image does not embed `/usr/local/freesurfer`; the license must be mounted at runtime. SynthSeg+FAST intermediates are kept under the configured work directory.
 MRSIPrep writes native T1-space derivatives including GM/WM/CSF probsegs and
 `desc-p1_T1w`, `desc-p2_T1w`, and `desc-p3_T1w`.
 

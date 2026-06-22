@@ -5,7 +5,9 @@ from __future__ import annotations
 import sys
 
 from mrsiprep.cli.parser import parse_args
+from mrsiprep.utils.debug import Debug
 from mrsiprep.utils.logging import setup_logging
+from mrsiprep.utils.provenance import check_external_software
 from mrsiprep.workflows.participant import run_participant_workflow, validate_participant_inputs
 
 
@@ -15,6 +17,10 @@ def main(argv: list[str] | None = None) -> int:
     if config.analysis_level != "participant":
         logger.error("Only participant analysis level is currently supported.")
         return 2
+    if config.check_external_libs:
+        debug = Debug(verbose=config.verbose)
+        ok = check_external_software(debug)
+        return 0 if ok else 1
     if config.validate_only:
         statuses = validate_participant_inputs(config)
         failed = [status for status in statuses if status.status != "success"]

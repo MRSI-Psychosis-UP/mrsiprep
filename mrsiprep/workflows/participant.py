@@ -6,10 +6,15 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rich import box
+from rich.table import Table
+
 from mrsiprep.io.bids import BIDSLayout, Recording
 from mrsiprep.io.derivatives import init_derivative
+from mrsiprep.io.loaders import load_mrsi_inputs
 from mrsiprep.io.validators import ValidationError, validate_recording
 from mrsiprep.mrsi.pvc import create_tissue_4d, run_pvc
+from mrsiprep.utils.debug import Debug
 from mrsiprep.mrsi.resampling import transform_mrsi_maps
 from mrsiprep.parcellation.extraction import extract_regional_metabolites
 from mrsiprep.tissue.ants_atropos import atropos_pve_path, segment_t1_atropos
@@ -47,6 +52,127 @@ class RecordingStatus:
     error: str | None = None
 
 
+def _gather_input_availability(config, subject: str, session: str | None) -> dict:
+    layout = BIDSLayout(config.bids_dir)
+    recording_id = f"sub-{subject}"
+    if session:
+        recording_id += f"_ses-{session}"
+
+    t1_path = layout.t1(subject, session, config.t1_pattern)
+    t1_status = bool(t1_path and t1_path.exists())
+
+    inputs = load_mrsi_inputs(layout, subject, session, config.metabolites)
+    total_expected = len(config.metabolites)
+    found_count = len(inputs.metabolite_maps)
+
+    brainmask_status = bool(inputs.brainmask)
+    if config.tissue_backend == "existing":
+        tissue_statuses = [
+            bool(layout.cat12_probseg(subject, session, idx))
+            for idx in (1, 2, 3)
+        ]
+        tissue_label = " ".join(
+            f"[{'green' if status else 'red'}]p{idx}[/{'green' if status else 'red'}]"
+            for idx, status in enumerate(tissue_statuses, 1)
+        )
+    else:
+        tissue_label = "[cyan]AUTO[/cyan]"
+
+    transforms = {}
+    for stage in ("mrsi", "anat", "t1-template", "template-mni"):
+        stage_paths = layout.transform(subject, session, stage)
+        transforms[stage] = bool(stage_paths and all(path.exists() for path in stage_paths))
+
+    return {
+        "recording_id": recording_id,
+        "subject": subject,
+        "session": session,
+        "t1": t1_status,
+        "mrsi_found": found_count,
+        "mrsi_expected": total_expected,
+        "brainmask": brainmask_status,
+        "tissue": tissue_label,
+        "transforms": transforms,
+    }
+
+
+def _render_preflight_table(summaries: list[dict], debug: Debug) -> None:
+    CHECK_MARK = "[green]✔[/green]"
+    CROSS_MARK = "[red]X[/red]"
+    PROC_MARK = "[orange3]PROC[/orange3]"
+    NA_MARK = "[grey58]N/A[/grey58]"
+    transform_columns = [
+        ("mrsi", "MRSI→T1"),
+        ("anat", "T1→MNI"),
+        ("t1-template", "T1→Template"),
+        ("template-mni", "Template→MNI"),
+    ]
+
+    table = Table(box=box.SIMPLE_HEAVY, show_lines=False, title="Input availability summary")
+    table.add_column("Recording", style="cyan", no_wrap=True)
+    table.add_column("T1w ref", justify="center")
+    table.add_column("MRSI files", justify="center")
+    table.add_column("Brainmask", justify="center")
+    table.add_column("Tissue files", justify="center")
+    for _, label in transform_columns:
+        table.add_column(label, justify="center")
+
+    missing_count = 0
+    total_missing_files = 0
+    missing_recordings = []
+    subject_session_counts: dict[str, int] = {}
+    for row in summaries:
+        subject_session_counts[row["subject"]] = subject_session_counts.get(row["subject"], 0) + (1 if row["session"] else 1)
+
+    for row in summaries:
+        mrsi_color = "green" if row["mrsi_found"] == row["mrsi_expected"] else "red"
+        mrsi_cell = f"[{mrsi_color}]{row['mrsi_found']}/{row['mrsi_expected']}[/{mrsi_color}]"
+        t1_cell = CHECK_MARK if row["t1"] else CROSS_MARK
+        brainmask_cell = CHECK_MARK if row["brainmask"] else CROSS_MARK
+
+        row_cells = [
+            row["recording_id"],
+            t1_cell,
+            mrsi_cell,
+            brainmask_cell,
+            row["tissue"],
+        ]
+
+        for stage_key, _ in transform_columns:
+            if not row["session"] and stage_key in {"t1-template", "template-mni"}:
+                row_cells.append(NA_MARK)
+            else:
+                row_cells.append(CHECK_MARK if row["transforms"].get(stage_key, False) else PROC_MARK)
+
+        table.add_row(*row_cells)
+
+        missing_items = []
+        if not row["t1"]:
+            missing_items.append("T1w")
+        if row["mrsi_found"] != row["mrsi_expected"]:
+            missing_items.append(f"MRSI {row['mrsi_found']}/{row['mrsi_expected']}")
+        if not row["brainmask"]:
+            missing_items.append("Brainmask")
+        if config.tissue_backend == "existing" and "red" in row["tissue"]:
+            missing_items.append("Tissue")
+
+        if missing_items:
+            missing_count += 1
+            total_missing_files += len(missing_items)
+            missing_recordings.append(row["recording_id"])
+
+    debug.separator()
+    debug.title("Preflight input availability")
+    debug.console.print(table)
+    if missing_count:
+        debug.error(
+            f"Detected {total_missing_files} missing or incomplete file categories across {missing_count}/{len(summaries)} recordings. "
+            f"Affected recordings: {', '.join(missing_recordings)}"
+        )
+    else:
+        debug.success("All required inputs are available for the selected recordings.")
+
+
 def collect_recordings(config) -> list[Recording]:
     if config.participants_file:
         return [Recording(sub, ses) for sub, ses in read_participant_pairs(config.participants_file)]
@@ -78,8 +204,16 @@ def run_participant_workflow(config) -> list[RecordingStatus]:
 
 
 def validate_participant_inputs(config) -> list[RecordingStatus]:
+    debug = Debug(verbose=config.verbose)
+    recordings = collect_recordings(config)
+    summaries = [
+        _gather_input_availability(config, normalize_subject(rec.subject), normalize_session(rec.session))
+        for rec in recordings
+    ]
+    _render_preflight_table(summaries, debug)
+
     statuses: list[RecordingStatus] = []
-    for recording in collect_recordings(config):
+    for recording in recordings:
         subject = normalize_subject(recording.subject)
         session = normalize_session(recording.session)
         try:
@@ -93,10 +227,10 @@ def validate_participant_inputs(config) -> list[RecordingStatus]:
                 "brainmask": inputs.brainmask,
             }
             statuses.append(RecordingStatus(subject, session, "success", outputs=outputs))
-            LOGGER.info("VALID sub-%s%s", subject, f" ses-{session}" if session else "")
+            debug.success("VALID", f"sub-{subject}", f"ses-{session}" if session else "")
         except Exception as exc:
             statuses.append(RecordingStatus(subject, session, "failed", error=str(exc)))
-            LOGGER.error("INVALID sub-%s%s: %s", subject, f" ses-{session}" if session else "", exc)
+            debug.error("INVALID", f"sub-{subject}", f"ses-{session}" if session else "", str(exc))
     return statuses
 
 

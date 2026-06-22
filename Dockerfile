@@ -1,5 +1,3 @@
-FROM freesurfer/freesurfer:7.4.1 AS freesurfer
-
 FROM python:3.11-slim
 
 LABEL org.opencontainers.image.title="MRSIPrep"
@@ -31,8 +29,6 @@ RUN apt-get update \
         perl \
         tcsh \
     && rm -rf /var/lib/apt/lists/*
-
-COPY --from=freesurfer /usr/local/freesurfer /usr/local/freesurfer
 
 WORKDIR /opt/mrsiprep
 COPY pyproject.toml README.md LICENSE ./

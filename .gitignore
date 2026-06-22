@@ -2,3 +2,4 @@
 /data
 tests/
 test_results/
+*__pycache__*

@@ -60,6 +60,7 @@ class MRSIPrepConfig:
     work_dir: Path | None = None
     verbose: bool = False
     validate_only: bool = False
+    check_external_libs: bool = False
 
     def __post_init__(self) -> None:
         self.bids_dir = Path(self.bids_dir).resolve()

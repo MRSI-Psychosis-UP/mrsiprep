@@ -11,6 +11,10 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import numpy as np
+from rich import box
+from rich.table import Table
+
+from mrsiprep.utils.debug import Debug
 
 try:
     from mrsiprep import __version__
@@ -35,6 +39,31 @@ class NumpyEncoder(json.JSONEncoder):
 def software_versions() -> dict[str, str | None]:
     tools = ["antsRegistrationSyN.sh", "Atropos", "N4BiasFieldCorrection", "hd-bet", "fslmaths", "fast", "petpvc", "chimera", "recon-all"]
     return {tool: shutil.which(tool) for tool in tools}
+
+
+def check_external_software(debug: Debug) -> bool:
+    statuses = software_versions()
+    table = Table(box=box.SIMPLE_HEAVY, show_lines=False, title="External software availability")
+    table.add_column("Tool", style="cyan", no_wrap=True)
+    table.add_column("Path", style="white")
+    table.add_column("Status", justify="center")
+
+    all_available = True
+    for tool, path in statuses.items():
+        if path:
+            table.add_row(tool, path, "[green]INSTALLED[/green]")
+        else:
+            table.add_row(tool, "[red]missing[/red]", "[bold red]MISSING[/bold red]")
+            all_available = False
+
+    debug.separator()
+    debug.title("External software availability")
+    debug.console.print(table)
+    if all_available:
+        debug.success("All required external binaries are available.")
+    else:
+        debug.failure("One or more required external binaries are missing.")
+    return all_available
 
 
 def write_provenance(config, out_path: str | Path, extra: dict | None = None) -> Path:
