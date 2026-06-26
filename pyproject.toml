@@ -38,7 +38,6 @@ all = ["antspyx", "PyQt6"]
 mrsiprep = "mrsiprep.cli.run:main"
 mrsiprep-import = "mrsiprep.interfaces.bids_import:main"
 mrsiprep-import-gui = "mrsiprep.interfaces.bids_import_gui:main"
-mrsiprep-skullstrip = "mrsiprep.interfaces.hdbet:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -48,5 +47,9 @@ include = ["mrsiprep", "mrsiprep.*"]
 mrsiprep = [
   "data/**/*.tsv",
   "data/**/*.json",
+  "data/atlas/**/*.nii.gz",
+  "data/atlas/**/*.nii",
+  "data/atlas/**/*.tsv",
+  "data/atlas/**/*.md",
   "reports/templates/*.html",
 ]

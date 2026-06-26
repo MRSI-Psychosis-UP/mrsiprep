@@ -30,7 +30,7 @@ def copy_tissue_to_derivatives(config, subject: str, session: str | None, tissue
     out: dict[str, Path] = {}
     for label, path in tissue_t1.items():
         target = anat_derivative(config.derivative_dir, subject, session, space="T1w", label=label, suffix_override="probseg")
-        if target.exists() and not config.overwrite:
+        if target.exists() and not (config.overwrite_seg or config.overwrite):
             out[label] = target
             continue
         img = nib.load(str(path))
@@ -42,7 +42,7 @@ def resample_tissue_to_mrsi(config, subject: str, session: str | None, tissue_t1
     out: dict[str, Path] = {}
     for label, path in tissue_t1.items():
         target = mrsi_derivative(config.derivative_dir, subject, session, space="MRSI", label=label, suffix_override="probseg")
-        if target.exists() and not config.overwrite:
+        if target.exists() and not (config.overwrite_seg or config.overwrite):
             out[label] = target
             continue
         out[label] = apply_transforms(mrsi_reference, path, t1_to_mrsi_transforms, target, interpolation="linear")

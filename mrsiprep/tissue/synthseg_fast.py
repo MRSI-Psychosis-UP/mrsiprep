@@ -5,69 +5,90 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
 from nibabel.processing import resample_from_to
-from scipy import ndimage as ndi
-
 from mrsiprep.interfaces.fsl import run_fast
-from mrsiprep.interfaces.hdbet import run_hd_bet
 from mrsiprep.io.naming import anat_derivative
 from mrsiprep.utils.images import save_nifti
 
 
-CSF_VENTRICLE_LABELS = {4, 5, 14, 15, 24, 43, 44}
+VENTRICLE_LABELS = {4, 5, 14, 15, 43, 44}
+OUTER_CSF_LABEL = 24
+CSF_VENTRICLE_LABELS = {*VENTRICLE_LABELS, OUTER_CSF_LABEL}
 
 
-def synthseg_fast_pve_path(config, subject: str, session: str | None, index: int) -> Path:
-    return anat_derivative(config.derivative_dir, subject, session, desc=f"p{index}")
+def synthseg_fast_csf_probseg_path(config, subject: str, session: str | None) -> Path:
+    return anat_derivative(config.derivative_dir, subject, session, space="T1w", label="CSF", suffix_override="probseg")
 
 
 def synthseg_fast_brain_path(config, subject: str, session: str | None) -> Path:
-    return anat_derivative(config.derivative_dir, subject, session, space="T1w", desc="hdbetSynthsegFastBrain")
+    return anat_derivative(config.derivative_dir, subject, session, space="T1w", desc="synthsegBrain")
 
 
 def synthseg_fast_brain_mask_path(config, subject: str, session: str | None) -> Path:
-    return anat_derivative(config.derivative_dir, subject, session, space="T1w", desc="hdbetSynthsegFastBrain", suffix_override="mask")
+    return anat_derivative(config.derivative_dir, subject, session, space="T1w", desc="synthsegBrain", suffix_override="mask")
+
+
+def synthseg_work_dir(config, subject: str, session: str | None) -> Path:
+    return config.work_dir / f"sub-{subject}" / (f"ses-{session}" if session else "ses-none") / "synthseg_fast"
+
+
+def synthseg_native_labels_path(config, subject: str, session: str | None) -> Path:
+    mode = getattr(config, "synthseg_mode", "fast")
+    return anat_derivative(config.derivative_dir, subject, session, space="T1w", desc=f"synthsegParc{mode.capitalize()}", suffix_override="dseg")
+
+
+def synthseg_fast_input_path(config, subject: str, session: str | None) -> Path:
+    return anat_derivative(config.derivative_dir, subject, session, space="T1w", desc="synthsegFastInput")
+
+
+def run_or_load_synthseg_labels(config, subject: str, session: str | None, t1_path: Path) -> np.ndarray:
+    work_dir = synthseg_work_dir(config, subject, session)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return _run_or_load_synthseg(config, Path(t1_path), work_dir, subject, session)
 
 
 def segment_t1_synthseg_fast(config, subject: str, session: str | None, t1_path: Path) -> dict[str, Path]:
-    """Segment GM/WM/CSF with HD-BET + SynthSeg-constrained FAST.
+    """Segment GM/WM/CSF with SynthSeg-constrained FAST.
 
-    SynthSeg contributes a CSF/ventricle prior and HD-BET contributes the
-    brain mask. The combined mask is applied to the raw T1 before FAST, and
-    FAST supplies the partial-volume estimates.
+    SynthSeg supplies the brain/CSF mask and anatomical labels. FAST runs only
+    inside that mask and supplies the partial-volume estimates.
     """
 
     t1_path = Path(t1_path)
-    work_dir = config.work_dir / f"sub-{subject}" / (f"ses-{session}" if session else "ses-none") / "synthseg_fast"
+    work_dir = synthseg_work_dir(config, subject, session)
     work_dir.mkdir(parents=True, exist_ok=True)
     outputs = {
-        "GM": anat_derivative(config.derivative_dir, subject, session, space="T1w", label="GM", suffix_override="probseg"),
-        "WM": anat_derivative(config.derivative_dir, subject, session, space="T1w", label="WM", suffix_override="probseg"),
-        "CSF": anat_derivative(config.derivative_dir, subject, session, space="T1w", label="CSF", suffix_override="probseg"),
-    }
-    pve_outputs = {
-        "GM": synthseg_fast_pve_path(config, subject, session, 1),
-        "WM": synthseg_fast_pve_path(config, subject, session, 2),
-        "CSF": synthseg_fast_pve_path(config, subject, session, 3),
+        label: anat_derivative(
+            config.derivative_dir,
+            subject,
+            session,
+            space="T1w",
+            label=label,
+            suffix_override="probseg",
+        )
+        for label in ("GM", "WM", "CSF")
     }
     brain_out = synthseg_fast_brain_path(config, subject, session)
     brain_mask_out = synthseg_fast_brain_mask_path(config, subject, session)
-    if all(path.exists() for path in [*outputs.values(), *pve_outputs.values(), brain_out, brain_mask_out]) and not config.overwrite:
+    if all(path.exists() for path in [*outputs.values(), brain_out, brain_mask_out]) and not (config.overwrite_seg or config.overwrite):
         return outputs
 
     t1_img = nib.load(str(t1_path))
-    labels_native = _run_or_load_synthseg(config, t1_path, work_dir)
-    csf_vent_mask = _synthseg_csf_ventricle_mask(labels_native)
-    hdbet_mask = _run_hdbet_mask(config, t1_path, brain_out, brain_mask_out)
-    fast_mask = hdbet_mask | csf_vent_mask
-    masked_t1 = _write_masked_t1(t1_img, fast_mask, work_dir / "synthsegFast_maskedT1w.nii.gz")
+    labels_native = _run_or_load_synthseg(config, t1_path, work_dir, subject, session)
+    fast_mask = _write_synthseg_brain(
+        config,
+        t1_img,
+        labels_native,
+        brain_out,
+        brain_mask_out,
+    )
+    masked_t1 = _write_masked_t1(t1_img, fast_mask, synthseg_fast_input_path(config, subject, session))
 
-    fast_sources = run_fast(masked_t1, work_dir / "fast" / "fast", verbose=config.verbose)
+    fast_sources = run_fast(masked_t1, work_dir / "fast" / "fast", verbose=config.verbose >= 3)
     fast_maps = {}
     for label, source in fast_sources.items():
         img = nib.load(str(source))
@@ -75,30 +96,41 @@ def segment_t1_synthseg_fast(config, subject: str, session: str | None, t1_path:
     fast_maps = _apply_synthseg_csf_tissue_correction(fast_maps, labels_native)
     for label, data in fast_maps.items():
         outputs[label] = save_nifti(data, t1_img, outputs[label], dtype=np.float32)
-        save_nifti(data, t1_img, pve_outputs[label], dtype=np.float32)
     return outputs
 
 
-def _run_or_load_synthseg(config, t1_path: Path, work_dir: Path) -> np.ndarray:
-    native_labels = work_dir / "synthseg_labels_space-T1w.nii.gz"
-    if native_labels.exists() and not config.overwrite:
+def extract_t1_synthseg(config, subject: str, session: str | None, t1_path: Path) -> tuple[Path, Path]:
+    """Create a SynthSeg-masked T1w and binary mask without running FAST."""
+
+    t1_path = Path(t1_path)
+    work_dir = synthseg_work_dir(config, subject, session)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    brain_out = synthseg_fast_brain_path(config, subject, session)
+    mask_out = synthseg_fast_brain_mask_path(config, subject, session)
+    if brain_out.exists() and mask_out.exists() and not (config.overwrite_seg or config.overwrite):
+        return brain_out, mask_out
+
+    t1_img = nib.load(str(t1_path))
+    labels = _run_or_load_synthseg(config, t1_path, work_dir, subject, session)
+    _write_synthseg_brain(config, t1_img, labels, brain_out, mask_out)
+    return brain_out, mask_out
+
+
+def _run_or_load_synthseg(config, t1_path: Path, work_dir: Path, subject: str, session: str | None) -> np.ndarray:
+    mode = getattr(config, "synthseg_mode", "fast")
+    native_labels = synthseg_native_labels_path(config, subject, session)
+    if native_labels.exists() and not (config.overwrite_seg or config.overwrite):
         return _load_labels(native_labels)
 
-    synthseg_labels = work_dir / "synthseg_labels.nii.gz"
-    if not synthseg_labels.exists() or config.overwrite:
+    synthseg_labels = work_dir / f"synthseg_parc-{mode}_labels.nii.gz"
+    if not synthseg_labels.exists() or config.overwrite_seg or config.overwrite:
         synthseg_cmd = _find_mri_synthseg()
+        command = _synthseg_command(config, synthseg_cmd, t1_path, synthseg_labels)
         subprocess.run(
-            [
-                synthseg_cmd,
-                "--i",
-                str(t1_path),
-                "--o",
-                str(synthseg_labels),
-                "--robust",
-            ],
+            command,
             check=True,
-            stdout=None if config.verbose else subprocess.PIPE,
-            stderr=None if config.verbose else subprocess.PIPE,
+            stdout=None if config.verbose >= 3 else subprocess.PIPE,
+            stderr=None if config.verbose >= 3 else subprocess.PIPE,
             text=True,
             env=_synthseg_env(synthseg_cmd),
         )
@@ -107,34 +139,46 @@ def _run_or_load_synthseg(config, t1_path: Path, work_dir: Path) -> np.ndarray:
     t1_img = nib.load(str(t1_path))
     if labels_img.shape[:3] != t1_img.shape[:3] or not np.allclose(labels_img.affine, t1_img.affine, atol=1e-3):
         labels_img = resample_from_to(labels_img, (t1_img.shape[:3], t1_img.affine), order=0)
-    labels = np.rint(np.nan_to_num(labels_img.get_fdata(dtype=np.float32).squeeze(), copy=False)).astype(np.uint8)
-    save_nifti(labels, t1_img, native_labels, dtype=np.uint8)
+    labels = np.rint(np.nan_to_num(labels_img.get_fdata(dtype=np.float32).squeeze(), copy=False)).astype(np.uint16)
+    save_nifti(labels, t1_img, native_labels, dtype=np.uint16)
     return labels
 
 
-def _run_hdbet_mask(config, t1_path: Path, brain_out: Path, mask_out: Path) -> np.ndarray:
-    if not brain_out.exists() or config.overwrite:
-        hdbet_input = t1_path
-        temp_dir = None
-        tmp_input = None
-        if t1_path.name.endswith(".nii.gz"):
-            temp_dir = tempfile.TemporaryDirectory(prefix="mrsiprep_synthseg_fast_hdbet_")
-            tmp_input = Path(temp_dir.name) / t1_path.name[:-7]
-            nib.save(nib.load(str(t1_path)), str(tmp_input))
-            hdbet_input = tmp_input
-        try:
-            run_hd_bet(hdbet_input, brain_out, device="cuda", verbose=config.verbose)
-        finally:
-            if tmp_input is not None and tmp_input.exists():
-                tmp_input.unlink()
-            if temp_dir is not None:
-                temp_dir.cleanup()
+def _synthseg_command(config, executable: str, t1_path: Path, out_path: Path) -> list[str]:
+    mode = getattr(config, "synthseg_mode", "fast")
+    command = [
+        executable,
+        "--i",
+        str(t1_path),
+        "--o",
+        str(out_path),
+        "--parc",
+        "--threads",
+        str(config.nthreads),
+        "--cpu",
+    ]
+    if mode == "fast":
+        command.append("--fast")
+    elif mode == "robust":
+        command.append("--robust")
+    return command
 
-    brain_img = nib.load(str(brain_out))
-    brain = np.nan_to_num(brain_img.get_fdata(dtype=np.float32).squeeze(), copy=False)
-    mask = ndi.binary_fill_holes(brain > 0)
-    save_nifti(mask.astype(np.uint8), brain_img, mask_out, dtype=np.uint8)
-    return mask.astype(bool, copy=False)
+
+def _synthseg_brain_mask(labels: np.ndarray) -> np.ndarray:
+    return np.asarray(labels) != 0
+
+
+def _write_synthseg_brain(
+    config,
+    t1_img: nib.Nifti1Image,
+    labels: np.ndarray,
+    brain_out: Path,
+    mask_out: Path,
+) -> np.ndarray:
+    mask = _synthseg_brain_mask(labels)
+    _write_masked_t1(t1_img, mask, brain_out)
+    save_nifti(mask.astype(np.uint8), t1_img, mask_out, dtype=np.uint8)
+    return mask
 
 
 def _synthseg_csf_ventricle_mask(labels: np.ndarray) -> np.ndarray:
@@ -149,7 +193,7 @@ def _apply_synthseg_csf_tissue_correction(fast_maps: dict[str, np.ndarray], labe
         for label in ("GM", "WM", "CSF"):
             corrected[label][synthseg_background] = 0.0
 
-    synthseg_csf = synthseg_labels == 24
+    synthseg_csf = _synthseg_csf_ventricle_mask(synthseg_labels)
     tissue_in_synthseg_csf = synthseg_csf & ((corrected["GM"] > 0.01) | (corrected["WM"] > 0.01))
     if np.any(tissue_in_synthseg_csf):
         corrected["GM"][tissue_in_synthseg_csf] = 0.0
@@ -165,7 +209,7 @@ def _write_masked_t1(t1_img: nib.Nifti1Image, mask: np.ndarray, out_path: Path) 
 
 
 def _load_labels(path: Path) -> np.ndarray:
-    return np.rint(np.nan_to_num(nib.load(str(path)).get_fdata(dtype=np.float32).squeeze(), copy=False)).astype(np.uint8)
+    return np.rint(np.nan_to_num(nib.load(str(path)).get_fdata(dtype=np.float32).squeeze(), copy=False)).astype(np.uint16)
 
 
 def _find_mri_synthseg() -> str:

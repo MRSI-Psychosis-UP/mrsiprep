@@ -140,21 +140,21 @@ class BIDSLayout:
     def transform(self, subject: str, session: str | None, stage: str, direction: str = "forward") -> list[Path]:
         sub = f"sub-{normalize_subject(subject)}"
         ses = self._ses_dir(session)
-        base = self.derivatives / "transforms" / "ants" / sub
+        base = self.derivatives / "mrsiprep" / sub
         if stage == "mrsi":
-            path = base / ses / "mrsi"
+            path = base / ses / "transforms" / "mrsi"
             prefix = f"{sub}_{ses}_desc-mrsi_to_t1w"
             has_inv_affine = True
         elif stage in {"anat", "t1w"}:
-            path = base / ses / "anat"
+            path = base / ses / "transforms" / "anat"
             prefix = f"{sub}_{ses}_desc-t1w_to_mni"
             has_inv_affine = True
         elif stage in {"t1-template", "template"}:
-            path = base / ses / "anat"
+            path = base / ses / "transforms" / "anat"
             prefix = f"{sub}_{ses}_desc-t1w_to_template"
             has_inv_affine = False
         elif stage in {"template-mni", "ses-all"}:
-            path = base / "ses-all" / "anat"
+            path = base / "ses-all" / "transforms" / "anat"
             prefix = f"{sub}_ses-all_desc-template_to_mni"
             has_inv_affine = False
         else:

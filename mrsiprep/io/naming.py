@@ -56,6 +56,11 @@ def figure_derivative(root: Path, subject: str, session: str | None, extension: 
     return _derivative(root, subject, session, "figures", extension, **entities)
 
 
+def qc_report_derivative(root: Path, subject: str, session: str | None, step: str, extension: str = "html") -> Path:
+    out_dir = subject_session_dir(root, subject, session, "figures") / "qc-reports"
+    return out_dir / f"{prefix(subject, session)}_step-{step}.{extension}"
+
+
 def _mrsi_folder(entities: dict) -> str:
     desc = entities.get("desc")
     suffix = entities.get("suffix_override")

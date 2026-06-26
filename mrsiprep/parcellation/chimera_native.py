@@ -22,7 +22,7 @@ def run_chimera_parcellation(config, subject: str, session: str | None, mrsi_ref
             raise FileNotFoundError(f"Missing raw T1w required for Chimera: sub-{subject} ses-{session}")
         fs_subject = freesurfer_subject_id(raw_t1)
         if not subject_dir_valid(config.freesurfer_dir, fs_subject):
-            run_recon_all(raw_t1, config.freesurfer_dir, fs_subject, force=False, nthreads=config.nthreads)
+            run_recon_all(raw_t1, config.freesurfer_dir, fs_subject, force=False, nthreads=config.nthreads, verbose=config.verbose >= 3)
         source_atlas = run_chimera(
             config.bids_dir,
             config.output_dir,
@@ -34,6 +34,7 @@ def run_chimera_parcellation(config, subject: str, session: str | None, mrsi_ref
             config.chimera_scale,
             config.chimera_grow,
             config.nthreads,
+            verbose=config.verbose >= 3,
         )
     scale = f"scale{config.chimera_scale}"
     atlas_name = f"chimera{config.chimera_scheme}"

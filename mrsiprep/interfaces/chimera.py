@@ -28,6 +28,7 @@ def run_chimera(
     scale: int,
     grow: int,
     nthreads: int = 4,
+    verbose: bool = False,
 ) -> Path:
     check_chimera()
     derivatives_dir = Path(derivatives_dir)
@@ -55,7 +56,7 @@ def run_chimera(
             "--nthreads",
             str(nthreads),
         ]
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, stdout=None if verbose else subprocess.PIPE, stderr=None if verbose else subprocess.PIPE, text=True)
     finally:
         ids_path.unlink(missing_ok=True)
     pattern = f"sub-{subject}"

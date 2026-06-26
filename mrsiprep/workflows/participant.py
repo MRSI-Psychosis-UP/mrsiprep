@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,19 +19,24 @@ from mrsiprep.mrsi.pvc import create_tissue_4d, run_pvc
 from mrsiprep.utils.debug import Debug
 from mrsiprep.mrsi.resampling import transform_mrsi_maps
 from mrsiprep.parcellation.extraction import extract_regional_metabolites
-from mrsiprep.tissue.ants_atropos import atropos_pve_path, segment_t1_atropos
-from mrsiprep.tissue.freesurfer import (
-    freesurfer_brain_mask_path,
-    freesurfer_brain_path,
-    freesurfer_pve_path,
-    segment_t1_freesurfer,
-)
-from mrsiprep.tissue.masks import build_brain_csf_seed_mask
+from mrsiprep.parcellation.metprofiles import export_metprofile_npz
+from mrsiprep.parcellation.synthseg import run_synthseg_parcellation
+from mrsiprep.reports.parcel_qc import write_parcel_qc
+from mrsiprep.reports.qc_combine import combine_qc_reports
+from mrsiprep.reports.connectivity_overview import write_connectivity_qc_report
+from mrsiprep.reports.mrsi_preproc import write_mrsi_preproc_qc_report
+from mrsiprep.reports.parcellation_overview import write_parcellation_qc_report
+from mrsiprep.reports.registration_overview import write_registration_overview_report
+from mrsiprep.reports.tissue import write_tissue_qc_report
 from mrsiprep.tissue.synthseg_fast import (
+    extract_t1_synthseg,
     segment_t1_synthseg_fast,
+    synthseg_native_labels_path,
+    synthseg_fast_brain_path,
     synthseg_fast_brain_mask_path,
-    synthseg_fast_pve_path,
+    synthseg_fast_csf_probseg_path,
 )
+from mrsiprep.utils.images import resolve_mni_resolution
 from mrsiprep.utils.logging import LOGGER
 from mrsiprep.utils.misc import normalize_session, normalize_subject, read_participant_pairs
 from mrsiprep.utils.provenance import write_provenance
@@ -96,7 +103,7 @@ def _gather_input_availability(config, subject: str, session: str | None) -> dic
     }
 
 
-def _render_preflight_table(summaries: list[dict], debug: Debug) -> None:
+def _render_preflight_table(config, summaries: list[dict], debug: Debug) -> None:
     CHECK_MARK = "[green]✔[/green]"
     CROSS_MARK = "[red]X[/red]"
     PROC_MARK = "[orange3]PROC[/orange3]"
@@ -128,7 +135,7 @@ def _render_preflight_table(summaries: list[dict], debug: Debug) -> None:
         mrsi_color = "green" if row["mrsi_found"] == row["mrsi_expected"] else "red"
         mrsi_cell = f"[{mrsi_color}]{row['mrsi_found']}/{row['mrsi_expected']}[/{mrsi_color}]"
         t1_cell = CHECK_MARK if row["t1"] else CROSS_MARK
-        brainmask_cell = CHECK_MARK if row["brainmask"] else CROSS_MARK
+        brainmask_cell = CHECK_MARK if row["brainmask"] else PROC_MARK
 
         row_cells = [
             row["recording_id"],
@@ -151,9 +158,7 @@ def _render_preflight_table(summaries: list[dict], debug: Debug) -> None:
             missing_items.append("T1w")
         if row["mrsi_found"] != row["mrsi_expected"]:
             missing_items.append(f"MRSI {row['mrsi_found']}/{row['mrsi_expected']}")
-        if not row["brainmask"]:
-            missing_items.append("Brainmask")
-        if config.tissue_backend == "existing" and "red" in row["tissue"]:
+        if config.processing_mode == "full" and config.tissue_backend == "existing" and "red" in row["tissue"]:
             missing_items.append("Tissue")
 
         if missing_items:
@@ -172,6 +177,12 @@ def _render_preflight_table(summaries: list[dict], debug: Debug) -> None:
     else:
         debug.success("All required inputs are available for the selected recordings.")
 
+    nproc, nthreads, cpu_warning = config.resolve_cpu_budget()
+    if cpu_warning:
+        debug.always(f"[warning]WARNING:[/warning] {cpu_warning}")
+    else:
+        debug.always(f"CPU budget: --nproc {nproc} x --nthreads {nthreads} = {nproc * nthreads} threads (of {os.cpu_count()} available).")
+
 
 def collect_recordings(config) -> list[Recording]:
     if config.participants_file:
@@ -185,21 +196,73 @@ def collect_recordings(config) -> list[Recording]:
     return BIDSLayout(config.bids_dir).discover_recordings()
 
 
+def _process_one_recording(config, subject: str, session: str | None) -> RecordingStatus:
+    debug = Debug(verbose=config.verbose)
+    msg = f"sub-{subject}" + (f" ses-{session}" if session else "")
+    debug.always(f"[proc]START[/proc] {msg}")
+    LOGGER.info("START %s", msg)
+    start = time.monotonic()
+    try:
+        outputs = run_single_recording(config, subject, session)
+        elapsed = time.monotonic() - start
+        debug.always(f"[success]FINISHED[/success] {msg} in {_format_elapsed(elapsed)}")
+        LOGGER.info("FINISHED %s in %s", msg, _format_elapsed(elapsed))
+        return RecordingStatus(subject, session, "success", outputs=outputs)
+    except Exception as exc:  # batch-safe failure
+        elapsed = time.monotonic() - start
+        debug.always(f"[failure]FAILED[/failure] {msg} after {_format_elapsed(elapsed)}: {exc}")
+        LOGGER.error("FAILED %s after %s: %s", msg, _format_elapsed(elapsed), exc)
+        if config.verbose >= 2:
+            LOGGER.error(traceback.format_exc())
+        return RecordingStatus(subject, session, "failed", error=str(exc))
+
+
+def _format_elapsed(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
 def run_participant_workflow(config) -> list[RecordingStatus]:
     ensure_work_dirs(config)
     init_derivative(config.derivative_dir)
+    debug = Debug(verbose=config.verbose)
+
+    recordings = collect_recordings(config)
+    ready: list[Recording] = []
     statuses: list[RecordingStatus] = []
-    for recording in collect_recordings(config):
+    for recording in recordings:
+        subject = normalize_subject(recording.subject)
+        session = normalize_session(recording.session)
         try:
-            outputs = run_single_recording(config, recording.subject, recording.session)
-            statuses.append(RecordingStatus(recording.subject, recording.session, "success", outputs=outputs))
-        except Exception as exc:  # batch-safe failure
-            msg = f"sub-{recording.subject}" + (f" ses-{recording.session}" if recording.session else "")
-            LOGGER.error("%s failed: %s", msg, exc)
-            if config.verbose:
-                LOGGER.error(traceback.format_exc())
-            statuses.append(RecordingStatus(recording.subject, recording.session, "failed", error=str(exc)))
-            continue
+            validate_recording(config, subject, session)
+            _validate_backend_inputs(config, subject, session)
+            ready.append(Recording(subject, session))
+        except (ValidationError, FileNotFoundError) as exc:
+            msg = f"sub-{subject}" + (f" ses-{session}" if session else "")
+            debug.error("SKIP", msg, str(exc))
+            statuses.append(RecordingStatus(subject, session, "skipped", error=str(exc)))
+
+    if not ready:
+        return statuses
+
+    if config.nproc <= 1:
+        for recording in ready:
+            statuses.append(_process_one_recording(config, recording.subject, recording.session))
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        with ProcessPoolExecutor(max_workers=config.nproc) as executor:
+            futures = {
+                executor.submit(_process_one_recording, config, recording.subject, recording.session): recording
+                for recording in ready
+            }
+            for future in as_completed(futures):
+                statuses.append(future.result())
     return statuses
 
 
@@ -210,7 +273,7 @@ def validate_participant_inputs(config) -> list[RecordingStatus]:
         _gather_input_availability(config, normalize_subject(rec.subject), normalize_session(rec.session))
         for rec in recordings
     ]
-    _render_preflight_table(summaries, debug)
+    _render_preflight_table(config, summaries, debug)
 
     statuses: list[RecordingStatus] = []
     for recording in recordings:
@@ -237,13 +300,10 @@ def validate_participant_inputs(config) -> list[RecordingStatus]:
 def _validate_backend_inputs(config, subject: str, session: str | None) -> None:
     layout = BIDSLayout(config.bids_dir)
     raw_t1 = layout.raw_t1(subject, session)
-    if config.tissue_backend in {"synthseg-fast", "freesurfer"} and raw_t1 is None:
+    if config.processing_mode == "light" and raw_t1 is None:
+        raise FileNotFoundError(f"Missing raw T1w required for light-mode SynthSeg parcellation: sub-{subject} ses-{session}")
+    if config.tissue_backend == "synthseg-fast" and raw_t1 is None:
         raise FileNotFoundError(f"Missing raw T1w required for {config.tissue_backend}: sub-{subject} ses-{session}")
-    if config.tissue_backend == "ants-atropos":
-        if raw_t1 is None:
-            raise FileNotFoundError(f"Missing raw T1w required for ANTs Atropos: sub-{subject} ses-{session}")
-        if layout.brain_mask(subject, session) is None and layout.t1(subject, session, config.t1_pattern) == raw_t1:
-            raise FileNotFoundError(f"Missing skull-stripped T1w or brain mask required for ANTs Atropos: sub-{subject} ses-{session}")
     if config.parcellation_mode == "mni" and config.atlas == "custom":
         if not config.custom_atlas or not config.custom_atlas.exists():
             raise FileNotFoundError("--custom-atlas is required for --parcellation-mode mni --atlas custom")
@@ -255,100 +315,193 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
     subject = normalize_subject(subject)
     session = normalize_session(session)
     LOGGER.info("Processing sub-%s%s", subject, f" ses-{session}" if session else "")
+    debug = Debug(verbose=config.verbose)
 
     t1_path, inputs = validate_recording(config, subject, session)
+    layout = BIDSLayout(config.bids_dir)
+    raw_t1 = layout.raw_t1(subject, session)
+    if raw_t1 is None:
+        raise FileNotFoundError(f"Missing raw T1w required for MRSIPrep: sub-{subject} ses-{session}")
     precomputed_tissue_t1 = None
     p3_override = None
     brain_mask_override = None
-    if config.tissue_backend == "ants-atropos":
-        layout = BIDSLayout(config.bids_dir)
-        raw_t1 = layout.raw_t1(subject, session)
-        if raw_t1 is None:
-            raise FileNotFoundError(f"Missing raw T1w required for ANTs Atropos segmentation: sub-{subject} ses-{session}")
-        brain_mask = layout.brain_mask(subject, session)
-        if brain_mask is None and Path(t1_path).resolve() == Path(raw_t1).resolve():
-            raise FileNotFoundError(
-                f"Missing skull-stripped T1w or brain mask required to seed ANTs Atropos: sub-{subject} ses-{session}"
-            )
-        atropos_mask = build_brain_csf_seed_mask(config, subject, session, t1_path, raw_t1, brain_mask)
-        precomputed_tissue_t1 = segment_t1_atropos(config, subject, session, raw_t1, atropos_mask)
-        p3_override = atropos_pve_path(config, subject, session, 3)
-    elif config.tissue_backend == "freesurfer":
-        layout = BIDSLayout(config.bids_dir)
-        raw_t1 = layout.raw_t1(subject, session)
-        if raw_t1 is None:
-            raise FileNotFoundError(f"Missing raw T1w required for FreeSurfer recon-all: sub-{subject} ses-{session}")
-        precomputed_tissue_t1 = segment_t1_freesurfer(config, subject, session, raw_t1, raw_t1_path=raw_t1)
-        t1_path = freesurfer_brain_path(config, subject, session)
-        brain_mask_override = freesurfer_brain_mask_path(config, subject, session)
-        p3_override = freesurfer_pve_path(config, subject, session, 3)
-    elif config.tissue_backend == "synthseg-fast":
-        layout = BIDSLayout(config.bids_dir)
-        raw_t1 = layout.raw_t1(subject, session)
-        if raw_t1 is None:
-            raise FileNotFoundError(f"Missing raw T1w required for SynthSeg+FAST segmentation: sub-{subject} ses-{session}")
-        precomputed_tissue_t1 = segment_t1_synthseg_fast(config, subject, session, raw_t1)
-        brain_mask_override = synthseg_fast_brain_mask_path(config, subject, session)
-        p3_override = synthseg_fast_pve_path(config, subject, session, 3)
+    with debug.step("Tissue segmentation"):
+        if config.processing_mode == "light":
+            synthseg_brain, synthseg_mask = extract_t1_synthseg(config, subject, session, raw_t1)
+            if config.registration_t1_target == "brain":
+                t1_path = synthseg_brain
+                brain_mask_override = synthseg_mask
+        elif config.processing_mode == "full" and config.tissue_backend == "synthseg-fast":
+            if raw_t1 is None:
+                raise FileNotFoundError(f"Missing raw T1w required for SynthSeg+FAST segmentation: sub-{subject} ses-{session}")
+            precomputed_tissue_t1 = segment_t1_synthseg_fast(config, subject, session, raw_t1)
+            t1_path = synthseg_fast_brain_path(config, subject, session)
+            brain_mask_override = synthseg_fast_brain_mask_path(config, subject, session)
+            p3_override = synthseg_fast_csf_probseg_path(config, subject, session)
 
-    anat = prepare_anatomical(config, subject, session, t1_path, p3_override=p3_override, brain_mask_override=brain_mask_override)
-    mrsi = run_mrsi_workflow(config, subject, session, inputs)
-    registration = run_registration_workflow(config, subject, session, mrsi.reference, anat.registration_t1w, anat.registration_mask)
-    tissue = run_tissue_workflow(
-        config,
-        subject,
-        session,
-        anat.registration_t1w,
-        anat.registration_mask,
-        mrsi.reference,
-        registration.mrsi_to_t1.inverse,
-        precomputed_tissue_t1=precomputed_tissue_t1,
-    )
+    with debug.step("Anatomical preparation"):
+        anat = prepare_anatomical(config, subject, session, t1_path, p3_override=p3_override, brain_mask_override=brain_mask_override)
+
+    with debug.step("MRSI preprocessing"):
+        mrsi = run_mrsi_workflow(config, subject, session, inputs)
+        qc_report_mrsi_preproc = write_mrsi_preproc_qc_report(config, subject, session, mrsi.raw_maps, mrsi.preproc_maps)
+
+    with debug.step("MRSI-T1w-MNI registration"):
+        registration = run_registration_workflow(config, subject, session, mrsi.reference, anat.registration_t1w, anat.registration_mask)
+
+    tissue = None
+    if config.processing_mode == "full":
+        with debug.step("Tissue probability maps in MRSI space"):
+            tissue = run_tissue_workflow(
+                config,
+                subject,
+                session,
+                anat.registration_t1w,
+                anat.registration_mask,
+                mrsi.reference,
+                registration.mrsi_to_t1.inverse,
+                precomputed_tissue_t1=precomputed_tissue_t1,
+            )
+
+    dseg_for_qc = synthseg_native_labels_path(config, subject, session) if config.processing_mode == "full" and config.tissue_backend == "synthseg-fast" else None
+    qc_report_tissue = write_tissue_qc_report(config, subject, session, raw_t1, dseg_for_qc, tissue.t1 if tissue is not None else None)
 
     corrected_maps = mrsi.preproc_maps
     tissue_4d = None
-    if not config.no_pvc:
-        tissue_4d = create_tissue_4d(config, subject, session, tissue.mrsi, mrsi.reference)
-        corrected_maps = run_pvc(config, subject, session, mrsi.preproc_maps, tissue_4d, mrsi.brainmask)
-        mrsi.corrected_maps = corrected_maps
+    if config.processing_mode == "full" and not config.no_pvc:
+        assert tissue is not None
+        with debug.step("Partial volume correction"):
+            tissue_4d = create_tissue_4d(config, subject, session, tissue.mrsi, mrsi.reference)
+            corrected_maps = run_pvc(config, subject, session, mrsi.preproc_maps, tissue_4d, mrsi.brainmask)
+            mrsi.corrected_maps = corrected_maps
 
-    transformed = transform_mrsi_maps(
-        config,
-        subject,
-        session,
-        corrected_maps,
-        registration.mrsi_to_t1.forward,
-        registration.t1_to_mni.forward if registration.t1_to_mni else None,
-        anat.registration_t1w,
-    )
+    with debug.step("Resampling MRSI maps to T1w/MNI space"):
+        transformed = transform_mrsi_maps(
+            config,
+            subject,
+            session,
+            corrected_maps,
+            registration.mrsi_to_t1.forward,
+            registration.t1_to_mni.forward if registration.t1_to_mni else None,
+            anat.registration_t1w,
+            mrsi_reference=mrsi.reference,
+            crlb_maps=mrsi.crlb_maps,
+            snr_map=mrsi.snr_map,
+            linewidth_map=mrsi.linewidth_map,
+        )
+        mni_resolution = resolve_mni_resolution(config.mni_resolution, anat.registration_t1w, mrsi.reference) if registration.t1_to_mni else None
+        qc_report_registration = write_registration_overview_report(
+            config,
+            subject,
+            session,
+            raw_t1,
+            transformed.get("T1w", {}).get(config.ref_met),
+            transformed.get("MNI152NLin2009cAsym", {}).get(config.ref_met),
+            mni_resolution=mni_resolution,
+            orig_ref_map_path=corrected_maps.get(config.ref_met),
+            mrsi_to_t1_transforms=registration.mrsi_to_t1.forward,
+        )
 
-    parcels = run_parcellation_workflow(config, subject, session, mrsi.reference, registration)
-    regional = extract_regional_metabolites(
-        config,
-        subject,
-        session,
-        corrected_maps,
-        parcels,
-        mrsi.qcmasks,
-        mrsi.snr_map,
-        mrsi.linewidth_map,
-        mrsi.crlb_maps,
-        tissue.mrsi,
-    )
-    connectivity = run_connectivity_workflow(config, subject, session, regional, parcels)
+    with debug.step("SynthSeg parcellation and QC"):
+        preliminary_parcels = run_synthseg_parcellation(
+            config,
+            subject,
+            session,
+            raw_t1,
+            mrsi.reference,
+            registration.mrsi_to_t1.inverse,
+        )
+        parcel_qc = write_parcel_qc(
+            config,
+            subject,
+            session,
+            preliminary_parcels,
+            raw_t1,
+            mrsi.brainmask,
+            registration.mrsi_to_t1.forward,
+            mrsi.crlb_maps,
+            mrsi.qcmasks,
+        )
+    parcels = preliminary_parcels
+    qc_report_parcellation = None
+    if config.processing_mode == "full":
+        with debug.step("Parcellation"):
+            parcels = run_parcellation_workflow(
+                config,
+                subject,
+                session,
+                mrsi.reference,
+                registration,
+                raw_t1=raw_t1,
+                t1_reference=anat.registration_t1w,
+            )
+            qc_report_parcellation = write_parcellation_qc_report(config, subject, session, raw_t1, parcels.atlas_t1, parcels.labels)
+
+    with debug.step("Regional metabolite extraction"):
+        regional = extract_regional_metabolites(
+            config,
+            subject,
+            session,
+            corrected_maps,
+            parcels,
+            mrsi.qcmasks,
+            mrsi.snr_map,
+            mrsi.linewidth_map,
+            mrsi.crlb_maps,
+            tissue.mrsi if tissue is not None else {},
+        )
+
+    with debug.step("Connectivity", live=False):
+        connectivity = run_connectivity_workflow(
+            config,
+            subject,
+            session,
+            regional,
+            parcels,
+            corrected_maps,
+            mrsi.crlb_maps,
+            mrsi.brainmask,
+            gm_fraction_path=tissue.mrsi.get("GM") if tissue is not None else None,
+        )
+        qc_report_connectivity = write_connectivity_qc_report(config, subject, session, connectivity.get("matrix_tsv"))
+
+    metprofiles = None
+    if config.processing_mode == "full":
+        metprofiles = export_metprofile_npz(
+            config,
+            subject,
+            session,
+            corrected_maps,
+            mrsi.water_map,
+            parcels,
+            regional,
+            anat.registration_mask,
+        )
     outputs = {
         "t1w": anat.t1w,
         "registration_t1w": anat.registration_t1w,
         "mrsi_reference": mrsi.reference,
         "qc_summary": mrsi.qc_summary,
+        "parcel_qc": parcel_qc,
         "tissue_4d": tissue_4d,
         "atlas_mrsi": parcels.atlas_mrsi,
+        "preliminary_atlas_mrsi": preliminary_parcels.atlas_mrsi,
         "regional_table": regional,
+        "metprofiles": metprofiles,
         "connectivity": connectivity,
         "transformed_maps": transformed,
+        "qc_report_tissue": qc_report_tissue,
+        "qc_report_mrsi_preproc": qc_report_mrsi_preproc,
+        "qc_report_registration": qc_report_registration,
+        "qc_report_parcellation": qc_report_parcellation,
+        "qc_report_connectivity": qc_report_connectivity,
     }
-    report = run_reports_workflow(config, subject, session, outputs)
-    outputs["report"] = report
+    with debug.step("Reports"):
+        report = run_reports_workflow(config, subject, session, outputs)
+        outputs["report"] = report
+        outputs["qc_report_combined"] = combine_qc_reports(config, subject, session)
+        for key in ("qc_report_tissue", "qc_report_mrsi_preproc", "qc_report_registration", "qc_report_parcellation", "qc_report_connectivity"):
+            outputs.pop(key, None)
     outputs["provenance"] = write_provenance(
         config,
         config.derivative_dir / f"sub-{subject}" / (f"ses-{session}" if session else "ses-none") / "mrsiprep_provenance.json",

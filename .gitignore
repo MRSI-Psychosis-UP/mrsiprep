@@ -3,3 +3,6 @@
 tests/
 test_results/
 *__pycache__*
+/docker/private-neurodeps.env
+/docker/private-sources/
+/dist/

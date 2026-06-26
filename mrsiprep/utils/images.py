@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import nibabel as nib
@@ -74,3 +75,22 @@ def assert_same_grid(paths: list[Path], label: str = "images") -> None:
 def mean_resolution(path: str | Path) -> float:
     img = nib.load(str(path))
     return float(np.mean(img.header.get_zooms()[:3]))
+
+
+def round_mm_resolution(value: float) -> int:
+    return max(1, round(value))
+
+
+def resolve_mni_resolution(choice: str, t1_path: str | Path, mrsi_path: str | Path | None = None) -> int:
+    """Resolve ``--mni-resolution`` (origres/t1wres/<N>mm) to an integer mm resolution."""
+    choice = str(choice).strip().lower()
+    if choice == "t1wres":
+        return round_mm_resolution(mean_resolution(t1_path))
+    if choice == "origres":
+        if mrsi_path is None:
+            raise ValueError("origres MNI resolution requested but no MRSI reference path was provided.")
+        return round_mm_resolution(mean_resolution(mrsi_path))
+    match = re.search(r"(\d+)mm", choice)
+    if match:
+        return int(match.group(1))
+    raise ValueError(f"Unsupported --mni-resolution value: {choice!r}. Use 'origres', 't1wres', or '<N>mm'.")

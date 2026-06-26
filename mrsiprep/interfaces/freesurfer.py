@@ -58,7 +58,7 @@ def subject_dir_valid(fs_subjects_dir: str | Path, subject: str) -> bool:
     return all(path.exists() for path in required)
 
 
-def run_recon_all(t1_path: str | Path, fs_subjects_dir: str | Path, subject: str, force: bool = False, nthreads: int = 4) -> Path:
+def run_recon_all(t1_path: str | Path, fs_subjects_dir: str | Path, subject: str, force: bool = False, nthreads: int = 4, verbose: bool = False) -> Path:
     require_command("recon-all")
     check_license()
     fs_subjects_dir = Path(fs_subjects_dir)
@@ -72,36 +72,10 @@ def run_recon_all(t1_path: str | Path, fs_subjects_dir: str | Path, subject: str
         cmd = ["recon-all", "-s", subject, "-all", "-sd", str(fs_subjects_dir), "-openmp", str(nthreads)]
     else:
         cmd = ["recon-all", "-s", subject, "-i", str(t1_path), "-all", "-sd", str(fs_subjects_dir), "-openmp", str(nthreads)]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, stdout=None if verbose else subprocess.PIPE, stderr=None if verbose else subprocess.PIPE, text=True)
     if not subject_dir_valid(fs_subjects_dir, subject):
         raise FreeSurferError(
             f"recon-all finished but required outputs are missing for {subject}: "
             f"{fs_subjects_dir / subject}"
         )
     return fs_subjects_dir / subject
-
-
-def convert_to_t1_space(
-    moving: str | Path,
-    target_t1: str | Path,
-    out_path: str | Path,
-    interpolation: str = "trilin",
-    verbose: bool = False,
-) -> Path:
-    require_command("mri_vol2vol")
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "mri_vol2vol",
-        "--mov",
-        str(moving),
-        "--targ",
-        str(target_t1),
-        "--regheader",
-        "--o",
-        str(out_path),
-        "--interp",
-        interpolation,
-    ]
-    subprocess.run(cmd, check=True, stdout=None if verbose else subprocess.PIPE, stderr=None if verbose else subprocess.PIPE, text=True)
-    return out_path

@@ -37,9 +37,17 @@ def run_pvc(config, subject: str, session: str | None, metabolite_maps: dict[str
         if out.exists() and not (config.overwrite_pve or config.overwrite):
             out_maps[met] = out
             continue
+        out.parent.mkdir(parents=True, exist_ok=True)
         tmp_out = out.with_name(out.name.replace("_desc-pvc_", "_desc-petpvcraw_"))
         cmd = ["petpvc", "-i", str(path), "-m", str(tissue_4d), "-p", "RBV", "-x", str(psf_width), "-y", str(psf_width), "-z", str(psf_width), "-o", str(tmp_out)]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except subprocess.CalledProcessError as exc:
+            details = "\n".join(part.strip() for part in (exc.stdout, exc.stderr) if part and part.strip())
+            message = f"PETPVC RBV failed for {met} with exit status {exc.returncode}"
+            if details:
+                message = f"{message}:\n{details}"
+            raise PVCError(message) from exc
         img = nib.load(str(tmp_out))
         _, raw = load_3d_data(path, dtype=np.float32, label=f"{met} map")
         data = np.squeeze(img.get_fdata(dtype=np.float32))

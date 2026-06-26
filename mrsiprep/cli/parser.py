@@ -24,49 +24,77 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--linewidth-max", type=float, default=QUALITY_DEFAULTS["linewidth_max"])
     parser.add_argument("--crlb-max", type=float, default=QUALITY_DEFAULTS["crlb_max"])
 
-    parser.add_argument("--tissue-backend", choices=["synthseg-fast", "freesurfer", "existing", "ants-atropos", "fast"], default="synthseg-fast")
+    parser.add_argument("--mode", "--processing-mode", dest="processing_mode", choices=["light", "full"], default="light")
+
+    parser.add_argument(
+        "--tissue-backend",
+        choices=["synthseg-fast", "existing", "none"],
+        default="synthseg-fast",
+        help="Tissue segmentation backend for PVC. 'none' disables tissue segmentation and PVC entirely.",
+    )
     parser.add_argument("--registration-backend", choices=["ants"], default="ants")
     parser.add_argument("--normalization", choices=["simple", "ants-syn", "existing"], default="simple")
     parser.add_argument("--output-spaces", nargs="+", default=["T1w", "MNI152NLin2009cAsym"])
-    parser.add_argument("--registration-t1-target", choices=["brain-csf", "brain", "raw"], default="brain-csf")
+    parser.add_argument(
+        "--mni-resolution",
+        default="t1wres",
+        help="MNI template resolution: 'origres' (MRSI native), 't1wres' (T1w native), or '<N>mm' (e.g. '2mm').",
+    )
+    parser.add_argument("--registration-t1-target", choices=["brain-csf", "brain", "raw"], default=None)
     parser.add_argument("--csf-pv-threshold", type=float, default=0.95)
-    parser.add_argument("--atropos-mask-dilation-mm", type=float, default=4.0)
     parser.add_argument("--ref-met", default="CrPCr")
     parser.add_argument("--t1", dest="t1_pattern", default="desc-brain_T1w")
 
-    parser.add_argument("--parcellation-mode", choices=["chimera", "mni"], default="chimera")
+    parser.add_argument("--parcellation-mode", choices=["synthseg", "chimera", "mni"], default=None)
+    parser.add_argument("--synthseg-mode", choices=["fast", "standard", "robust"], default="robust")
     parser.add_argument("--chimera-scheme", default="LFMIHIFIS")
     parser.add_argument("--chimera-scale", type=_parse_scale, default=3)
     parser.add_argument("--chimera-grow", type=int, default=2)
-    parser.add_argument("--atlas", default="schaefer200")
+    parser.add_argument("--atlas", default="chimera-LFMIHIFIS-3")
     parser.add_argument("--custom-atlas", type=Path, default=None)
     parser.add_argument("--custom-atlas-lut", type=Path, default=None)
     parser.add_argument("--fs-subjects-dir", type=Path, default=None)
-    parser.add_argument("--extraction-mode", choices=["hard", "soft"], default="hard")
 
     parser.add_argument("--write-connectivity", action="store_true")
     parser.add_argument("--connectivity-method", choices=["pearson", "spearman", "cosine", "euclidean_distance"], default="spearman")
     parser.add_argument("--connectivity-space", choices=["MRSI", "T1w", "MNI"], default="MRSI")
+    parser.add_argument("--connectivity-n-perturbations", type=int, default=50, help="Number of CRLB-scaled noise perturbations per metabolite used to build the connectivity similarity matrix.")
+    parser.add_argument("--connectivity-sigma-scale", type=float, default=2.0, help="Scale factor applied to the CRLB-derived noise sigma when perturbing metabolite maps for connectivity.")
     parser.add_argument("--regional-summary", choices=["mean", "median", "weighted_mean"], default="mean")
 
-    parser.add_argument("--transform", default="mni-origres")
+    parser.add_argument("--transform", default="", help="Legacy output transform override; prefer --output-spaces.")
     parser.add_argument("--no-filter", action="store_true")
     parser.add_argument("--spikepc", type=float, default=99.0)
     parser.add_argument("--no-pvc", action="store_true")
     parser.add_argument("--proc-mnilong", action="store_true")
-    parser.add_argument("--nthreads", type=int, default=4)
+    parser.add_argument("--transform-spikemask", action="store_true", help="Also transform per-metabolite spike masks into T1w/MNI space.")
+    parser.add_argument("--nthreads", type=int, default=16, help="ANTs/ITK thread count per subject/session process.")
+    parser.add_argument(
+        "--nproc",
+        type=int,
+        default=1,
+        help="Number of subject/session recordings to process in parallel. Each parallel process gets --nthreads threads; "
+        "if nproc*nthreads exceeds the available CPU count, --nthreads is coerced down and a warning is shown at startup.",
+    )
     parser.add_argument("--work-dir", type=Path, default=None)
 
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--overwrite-filt", action="store_true")
+    parser.add_argument("--overwrite-seg", action="store_true", help="Force recompute of tissue segmentation (SynthSeg brain extraction + dseg/probseg), even if cached outputs exist.")
     parser.add_argument("--overwrite-pve", action="store_true")
     parser.add_argument("--overwrite-t1-reg", action="store_true")
     parser.add_argument("--overwrite-mni-reg", action="store_true")
     parser.add_argument("--overwrite-transform", action="store_true")
-    parser.add_argument("--overwrite-freesurfer", action="store_true", help="Delete and rerun the FreeSurfer subject directory for each processed recording.")
     parser.add_argument("--validate-only", action="store_true", help="Check selected subject/session inputs and exit without running preprocessing.")
     parser.add_argument("--check-external-libs", action="store_true", help="Verify required external binaries are available and exit.")
-    parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        type=int,
+        choices=[0, 1, 2, 3],
+        default=1,
+        help="0=subject start/finish only, 1=+processing steps, 2=+step details, 3=+raw ANTs/recon-all/mri_synthseg output.",
+    )
     return parser
 
 
@@ -88,16 +116,18 @@ def parse_args(argv: list[str] | None = None) -> MRSIPrepConfig:
         snr_min=args.snr_min,
         linewidth_max=args.linewidth_max,
         crlb_max=args.crlb_max,
+        processing_mode=args.processing_mode,
         tissue_backend=args.tissue_backend,
         registration_backend=args.registration_backend,
         normalization=args.normalization,
         output_spaces=args.output_spaces,
+        mni_resolution=args.mni_resolution,
         registration_t1_target=args.registration_t1_target,
         csf_pv_threshold=args.csf_pv_threshold,
-        atropos_mask_dilation_mm=args.atropos_mask_dilation_mm,
         ref_met=args.ref_met,
         t1_pattern=args.t1_pattern,
         parcellation_mode=args.parcellation_mode,
+        synthseg_mode=args.synthseg_mode,
         chimera_scheme=args.chimera_scheme,
         chimera_scale=args.chimera_scale,
         chimera_grow=args.chimera_grow,
@@ -105,25 +135,28 @@ def parse_args(argv: list[str] | None = None) -> MRSIPrepConfig:
         custom_atlas=args.custom_atlas,
         custom_atlas_lut=args.custom_atlas_lut,
         fs_subjects_dir=args.fs_subjects_dir,
-        extraction_mode=args.extraction_mode,
         write_connectivity=args.write_connectivity,
         connectivity_method=args.connectivity_method,
         connectivity_space=args.connectivity_space,
+        connectivity_n_perturbations=args.connectivity_n_perturbations,
+        connectivity_sigma_scale=args.connectivity_sigma_scale,
         regional_summary=args.regional_summary,
         transform=args.transform,
         filter_biharmonic=not args.no_filter,
         spike_percentile=args.spikepc,
         no_pvc=args.no_pvc,
         proc_mnilong=args.proc_mnilong,
+        transform_spikemask=args.transform_spikemask,
         nthreads=args.nthreads,
+        nproc=args.nproc,
         work_dir=args.work_dir,
         overwrite=args.overwrite,
         overwrite_filt=args.overwrite_filt,
+        overwrite_seg=args.overwrite_seg,
         overwrite_pve=args.overwrite_pve,
         overwrite_t1_reg=args.overwrite_t1_reg,
         overwrite_mni_reg=args.overwrite_mni_reg,
         overwrite_transform=args.overwrite_transform,
-        overwrite_freesurfer=args.overwrite_freesurfer,
         validate_only=args.validate_only,
         check_external_libs=args.check_external_libs,
         verbose=args.verbose,

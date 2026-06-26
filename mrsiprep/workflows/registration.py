@@ -20,6 +20,6 @@ def run_registration_workflow(config, subject: str, session: str | None, mrsi_re
     mrsi_to_t1 = run_mrsi_to_t1(config, subject, session, mrsi_reference, registration_t1, fixed_mask=registration_mask)
     t1_to_mni = None
     if "MNI152NLin2009cAsym" in config.output_spaces or config.parcellation_mode == "mni" or "mni" in config.transform:
-        t1_to_mni = run_t1_to_mni(config, subject, session, registration_t1)
+        t1_to_mni = run_t1_to_mni(config, subject, session, registration_t1, mrsi_reference=mrsi_reference)
     write_registration_qc(config, subject, session, registration_t1, mrsi_reference)
     return RegistrationResult(mrsi_to_t1=mrsi_to_t1, t1_to_mni=t1_to_mni)

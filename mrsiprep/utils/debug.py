@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
+from contextlib import contextmanager
 from rich.console import Console
 from rich.markup import escape
 from rich.theme import Theme
 
 
 class Debug:
-    def __init__(self, verbose: bool = True):
+    """Leveled console output.
+
+    Verbosity levels:
+      0 - only subject start/finish + elapsed time.
+      1 - also show which processing step is currently running.
+      2 - also show step-level details (info/success/warning/error messages).
+      3 - also let external tools (ANTs, recon-all, mri_synthseg) print their own
+          raw output instead of being captured/suppressed.
+    """
+
+    def __init__(self, verbose: int | bool = 1):
         custom_theme = Theme(
             {
                 "success": "green",
@@ -20,8 +32,17 @@ class Debug:
                 "debug": "magenta",
             }
         )
-        self.console = Console(theme=custom_theme)
-        self.verbose = verbose
+        # Docker's stdout is often not a TTY, which makes rich auto-disable
+        # color; force it on unless the user opted out via NO_COLOR.
+        force_color = not os.environ.get("NO_COLOR")
+        self.console = Console(theme=custom_theme, force_terminal=force_color, color_system="standard" if force_color else None)
+        self.verbose = int(verbose)
+        # `force_terminal` above makes `console.is_terminal` report True even when
+        # piped (e.g. into a log file or Docker logs), so live-spinner animation
+        # needs its own check against the real stdout, independent of color forcing.
+        import sys
+
+        self._is_live_terminal = sys.stdout.isatty()
 
     def _prepare_message(self, *messages):
         if not messages:
@@ -35,43 +56,96 @@ class Debug:
         text = " ".join(str(message) for message in items) if items else ""
         return prefix, text
 
+    @property
+    def show_tool_output(self) -> bool:
+        """Whether external tools (ANTs/recon-all/mri_synthseg) should print their raw output."""
+        return self.verbose >= 3
+
+    def always(self, *messages):
+        """Prints regardless of verbosity level (e.g. subject start/finish, elapsed time)."""
+        prefix, message = self._prepare_message(*messages)
+        self.console.print(f"{prefix}{escape(message)}")
+
     def success(self, *messages):
-        if self.verbose:
+        if self.verbose >= 2:
             prefix, message = self._prepare_message(*messages)
             self.console.print(f"{prefix}[success][ SUCCESS ][/success] {escape(message)}")
 
     def error(self, *messages):
-        if self.verbose:
+        if self.verbose >= 2:
             prefix, message = self._prepare_message(*messages)
             self.console.print(f"{prefix}[error][  ERROR  ][/error] {escape(message)}")
 
     def warning(self, *messages):
-        if self.verbose:
+        if self.verbose >= 2:
             prefix, message = self._prepare_message(*messages)
             self.console.print(f"{prefix}[warning][ WARNING ][/warning] {escape(message)}")
 
     def failure(self, *messages):
-        if self.verbose:
+        if self.verbose >= 2:
             prefix, message = self._prepare_message(*messages)
             self.console.print(f"{prefix}[failure][ FAILURE ][/failure] {escape(message)}")
 
     def info(self, *messages):
-        if self.verbose:
+        if self.verbose >= 2:
             prefix, message = self._prepare_message(*messages)
             self.console.print(f"{prefix}[info][   INFO  ][/info] {escape(message)}")
 
     def proc(self, *messages):
-        if self.verbose:
+        if self.verbose >= 1:
             prefix, message = self._prepare_message(*messages)
             self.console.print()
             self.console.print(f"{prefix}[proc][  PROC  ][/proc] {escape(message)}")
 
+    @contextmanager
+    def step(self, *messages, live: bool = True):
+        """Like `proc()`, but shows a live spinner while the `with` body runs and
+        replaces it with a checkmark on success (or a cross on exception).
+
+        Falls back to plain start/end lines (no animation) when stdout is not an
+        interactive terminal, so piped/redirected output (e.g. Docker logs) stays
+        clean instead of filling with overwritten-line artifacts. Pass
+        `live=False` when the step's body renders its own rich `Live` display
+        (e.g. a `rich.progress.Progress` bar) — nesting two `Live` regions on the
+        terminal makes both unreadable, so the step falls back to the same plain
+        start/end lines used for non-interactive terminals.
+        """
+        if self.verbose < 1:
+            yield
+            return
+
+        prefix, message = self._prepare_message(*messages)
+        escaped = escape(message)
+        self.console.print()
+
+        if not self._is_live_terminal or not live:
+            self.console.print(f"{prefix}[proc][  PROC  ][/proc] {escaped}")
+            try:
+                yield
+            except BaseException:
+                self.console.print(f"{prefix}[failure][   ✗    ][/failure] {escaped}")
+                raise
+            else:
+                self.console.print(f"{prefix}[success][   ✓    ][/success] {escaped}")
+            return
+
+        with self.console.status(f"{prefix}[proc][  PROC  ][/proc] {escaped}", spinner="dots") as status:
+            try:
+                yield
+            except BaseException:
+                status.stop()
+                self.console.print(f"{prefix}[failure][   ✗    ][/failure] {escaped}")
+                raise
+            else:
+                status.stop()
+                self.console.print(f"{prefix}[success][   ✓    ][/success] {escaped}")
+
     def separator(self):
-        if self.verbose:
+        if self.verbose >= 1:
             self.console.rule()
 
     def title(self, title: str):
-        if self.verbose:
+        if self.verbose >= 1:
             self.console.rule(title, style="debug")
 
     def __progress_bar_task(self, duration: int):

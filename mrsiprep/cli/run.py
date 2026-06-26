@@ -13,13 +13,17 @@ from mrsiprep.workflows.participant import run_participant_workflow, validate_pa
 
 def main(argv: list[str] | None = None) -> int:
     config = parse_args(argv)
-    logger = setup_logging(config.verbose)
+    logger = setup_logging(config.verbose, log_dir=config.logs_dir)
+    nproc, nthreads, cpu_warning = config.resolve_cpu_budget()
+    if cpu_warning:
+        logger.warning(cpu_warning)
+    config.nproc, config.nthreads = nproc, nthreads
     if config.analysis_level != "participant":
         logger.error("Only participant analysis level is currently supported.")
         return 2
     if config.check_external_libs:
         debug = Debug(verbose=config.verbose)
-        ok = check_external_software(debug)
+        ok = check_external_software(debug, config)
         return 0 if ok else 1
     if config.validate_only:
         statuses = validate_participant_inputs(config)

@@ -5,6 +5,13 @@ from mrsiprep.io.validators import validate_recording
 from mrsiprep.workflows.participant import validate_participant_inputs
 
 
+def _write_quality_maps(mrsi_dir, img, subject, session, metabolites, save):
+    for met in metabolites:
+        save(img, mrsi_dir / f"sub-{subject}_ses-{session}_space-orig_met-{met}_desc-crlb_mrsi.nii.gz")
+    save(img, mrsi_dir / f"sub-{subject}_ses-{session}_space-orig_desc-snr_mrsi.nii.gz")
+    save(img, mrsi_dir / f"sub-{subject}_ses-{session}_space-orig_desc-fwhm_mrsi.nii.gz")
+
+
 class BIDSInputTests(unittest.TestCase):
     def test_brain_csf_requires_p3(self):
         import tempfile
@@ -24,28 +31,21 @@ class BIDSInputTests(unittest.TestCase):
             skull.mkdir(parents=True)
             img = nib.Nifti1Image(np.ones((2, 2, 2), dtype="float32"), np.eye(4))
             nib.save(img, skull / "sub-S001_ses-V1_desc-brain_T1w.nii.gz")
-            for met in ["CrPCr", "GluGln", "GPCPCh", "NAANAAG", "Ins"]:
+            metabolites = ["CrPCr", "GluGln", "GPCPCh", "NAANAAG", "Ins"]
+            for met in metabolites:
                 nib.save(img, mrsi / f"sub-S001_ses-V1_space-orig_met-{met}_desc-signal_mrsi.nii.gz")
+            _write_quality_maps(mrsi, img, "S001", "V1", metabolites, nib.save)
             cfg = MRSIPrepConfig(
                 bids,
                 tmp_path / "derivatives",
                 "participant",
                 participant_label=["S001"],
                 session_label=["V1"],
+                processing_mode="full",
                 tissue_backend="existing",
             )
             with self.assertRaisesRegex(Exception, "p3"):
                 validate_recording(cfg, "S001", "V1")
-
-            cfg_fs = MRSIPrepConfig(
-                bids,
-                tmp_path / "derivatives",
-                "participant",
-                participant_label=["S001"],
-                session_label=["V1"],
-                tissue_backend="freesurfer",
-            )
-            validate_recording(cfg_fs, "S001", "V1")
 
             cfg_synthseg_fast = MRSIPrepConfig(
                 bids,
@@ -53,6 +53,7 @@ class BIDSInputTests(unittest.TestCase):
                 "participant",
                 participant_label=["S001"],
                 session_label=["V1"],
+                processing_mode="full",
                 tissue_backend="synthseg-fast",
             )
             validate_recording(cfg_synthseg_fast, "S001", "V1")
@@ -74,8 +75,10 @@ class BIDSInputTests(unittest.TestCase):
             img = nib.Nifti1Image(np.ones((2, 2, 2), dtype="float32"), np.eye(4))
             raw_t1 = anat / "sub-S001_ses-V1_acq-mprage_run-01_T1w.nii.gz"
             nib.save(img, raw_t1)
-            for met in ["CrPCr", "GluGln", "GPCPCh", "NAANAAG", "Ins"]:
+            metabolites = ["CrPCr", "GluGln", "GPCPCh", "NAANAAG", "Ins"]
+            for met in metabolites:
                 nib.save(img, mrsi / f"sub-S001_ses-V1_space-orig_met-{met}_desc-signal_mrsi.nii.gz")
+            _write_quality_maps(mrsi, img, "S001", "V1", metabolites, nib.save)
 
             cfg = MRSIPrepConfig(
                 bids,
@@ -111,6 +114,7 @@ class BIDSInputTests(unittest.TestCase):
                     metabolites.remove("Ins")
                 for met in metabolites:
                     nib.save(img, mrsi / f"sub-S001_ses-{ses}_space-orig_met-{met}_desc-signal_mrsi.nii.gz")
+                _write_quality_maps(mrsi, img, "S001", ses, metabolites, nib.save)
 
             cfg = MRSIPrepConfig(
                 bids,

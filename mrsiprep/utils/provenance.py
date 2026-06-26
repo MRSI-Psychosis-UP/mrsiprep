@@ -36,13 +36,26 @@ class NumpyEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def software_versions() -> dict[str, str | None]:
-    tools = ["antsRegistrationSyN.sh", "Atropos", "N4BiasFieldCorrection", "hd-bet", "fslmaths", "fast", "petpvc", "chimera", "recon-all"]
+def required_external_tools(config=None) -> list[str]:
+    tools = ["antsRegistrationSyN.sh", "antsRegistration", "antsApplyTransforms", "N4BiasFieldCorrection", "mri_synthseg"]
+    full = config is None or getattr(config, "processing_mode", "full") == "full"
+    tissue_backend = getattr(config, "tissue_backend", "synthseg-fast") if config is not None else "synthseg-fast"
+    if full and tissue_backend == "synthseg-fast":
+        tools.append("fast")
+    if full and (config is None or not getattr(config, "no_pvc", False)):
+        tools.append("petpvc")
+    if full and (config is None or getattr(config, "parcellation_mode", "chimera") == "chimera"):
+        tools.extend(["chimera", "recon-all"])
+    return list(dict.fromkeys(tools))
+
+
+def software_versions(config=None) -> dict[str, str | None]:
+    tools = required_external_tools(config)
     return {tool: shutil.which(tool) for tool in tools}
 
 
-def check_external_software(debug: Debug) -> bool:
-    statuses = software_versions()
+def check_external_software(debug: Debug, config=None) -> bool:
+    statuses = software_versions(config)
     table = Table(box=box.SIMPLE_HEAVY, show_lines=False, title="External software availability")
     table.add_column("Tool", style="cyan", no_wrap=True)
     table.add_column("Path", style="white")
@@ -73,7 +86,7 @@ def write_provenance(config, out_path: str | Path, extra: dict | None = None) ->
         "python": sys.version,
         "platform": platform.platform(),
         "config": config.to_dict() if hasattr(config, "to_dict") else {},
-        "software": software_versions(),
+        "software": software_versions(config),
     }
     if extra:
         payload.update(extra)
