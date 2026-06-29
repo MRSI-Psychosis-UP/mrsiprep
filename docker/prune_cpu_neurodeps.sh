@@ -99,8 +99,9 @@ rm -rf \
   /var/tmp/* \
   /var/lib/apt/lists/* \
   /var/cache/apt/*
-find /usr/local/lib/python3.10 /opt/petpvc -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
-find /usr/local/lib/python3.10 /opt/petpvc -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
+python_lib_dir="$(/usr/bin/python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+find "${python_lib_dir}" /opt/petpvc -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+find "${python_lib_dir}" /opt/petpvc -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
 
 printf 'Installed sizes after pruning:\n'
 du -sh "${FSL_ROOT}" "${FS_ROOT}"

@@ -64,6 +64,7 @@ RUN /usr/bin/python3 -m pip install --upgrade pip setuptools wheel \
     && /usr/bin/python3 -m pip install antspyx \
     && /usr/bin/python3 -m pip install \
         numpy scipy pandas nibabel nilearn matplotlib scikit-image rich \
+        h5py pyvista colorama dipy screeninfo ipython \
     && rm -rf /tmp/mrsiprep-python-deps
 
 # Cache the default MNI template while the private build has network access.

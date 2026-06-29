@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 from mrsiprep.cli.parser import parse_args
+from mrsiprep.utils.banner import print_banner
 from mrsiprep.utils.debug import Debug
 from mrsiprep.utils.logging import setup_logging
 from mrsiprep.utils.provenance import check_external_software
@@ -12,6 +13,7 @@ from mrsiprep.workflows.participant import run_participant_workflow, validate_pa
 
 
 def main(argv: list[str] | None = None) -> int:
+    print_banner()
     config = parse_args(argv)
     logger = setup_logging(config.verbose, log_dir=config.logs_dir)
     nproc, nthreads, cpu_warning = config.resolve_cpu_budget()

@@ -56,7 +56,15 @@ def run_chimera(
             "--nthreads",
             str(nthreads),
         ]
-        subprocess.run(cmd, check=True, stdout=None if verbose else subprocess.PIPE, stderr=None if verbose else subprocess.PIPE, text=True)
+        result = subprocess.run(
+            cmd,
+            stdout=None if verbose else subprocess.PIPE,
+            stderr=None if verbose else subprocess.STDOUT,
+            text=True,
+        )
+        if result.returncode != 0:
+            output = f"\n{result.stdout}" if result.stdout else ""
+            raise ChimeraError(f"chimera exited with status {result.returncode}{output}")
     finally:
         ids_path.unlink(missing_ok=True)
     pattern = f"sub-{subject}"
