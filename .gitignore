@@ -6,4 +6,4 @@ test_results/
 /docker/private-neurodeps.env
 /docker/private-sources/
 /dist/
-/site/
+/docs/_build/

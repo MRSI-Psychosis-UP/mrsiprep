@@ -26,4 +26,4 @@ docker run --rm \
 ```
 
 You will still need a BIDS dataset with already-quantified MRSI maps; see
-[Usage](usage.md) for the full command-line reference.
+[Basic Usage](usage_basic.md) for the full command-line walkthrough.
