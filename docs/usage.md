@@ -1,7 +1,14 @@
 # Usage
 
+All commands below run through Docker; there is no supported host
+installation of the `mrsiprep` CLI.
+
 ```bash
-mrsiprep /path/to/bids /path/to/derivatives participant \
+docker run --rm \
+  -v /path/to/bids:/data:ro \
+  -v /path/to/derivatives:/out \
+  fedlucchetti/mrsiprep:cpu \
+  /data /out participant \
   --participant-label S001 \
   --session-label V1 \
   --mode light \
@@ -25,7 +32,11 @@ sees the complete CSF compartment when estimating tissue probabilities.
 Use full mode for tissue PVC and Chimera parcellation:
 
 ```bash
-mrsiprep /path/to/bids /path/to/derivatives participant \
+docker run --rm \
+  -v /path/to/bids:/data:ro \
+  -v /path/to/derivatives:/out \
+  fedlucchetti/mrsiprep:cpu \
+  /data /out participant \
   --participant-label S001 \
   --session-label V1 \
   --mode full \
@@ -47,7 +58,11 @@ Use a bundled MNI atlas instead of Chimera with:
 Check all selected subject/session inputs without running preprocessing:
 
 ```bash
-mrsiprep /path/to/bids /path/to/derivatives participant \
+docker run --rm \
+  -v /path/to/bids:/data:ro \
+  -v /path/to/derivatives:/out \
+  fedlucchetti/mrsiprep:cpu \
+  /data /out participant \
   --participants participants.tsv \
   --validate-only
 ```
@@ -58,7 +73,11 @@ expensive segmentation, registration, parcellation, or PVC step starts.
 ## Verbosity, logging, and parallel processing
 
 ```bash
-mrsiprep /path/to/bids /path/to/derivatives participant \
+docker run --rm \
+  -v /path/to/bids:/data:ro \
+  -v /path/to/derivatives:/out \
+  fedlucchetti/mrsiprep:cpu \
+  /data /out participant \
   --participants participants.tsv \
   --mode full \
   --verbose 1 \
@@ -94,7 +113,11 @@ Light mode requires `mri_synthseg` and ANTs. Full mode with the default
 Use precomputed CAT12 tissue maps with:
 
 ```bash
-mrsiprep /path/to/bids /path/to/derivatives participant \
+docker run --rm \
+  -v /path/to/bids:/data:ro \
+  -v /path/to/derivatives:/out \
+  fedlucchetti/mrsiprep:cpu \
+  /data /out participant \
   --participant-label S001 \
   --session-label V1 \
   --mode full \
@@ -114,7 +137,11 @@ Disable tissue segmentation and PVC entirely with `--tissue-backend none`
 (equivalent to also passing `--no-pvc`):
 
 ```bash
-mrsiprep /path/to/bids /path/to/derivatives participant \
+docker run --rm \
+  -v /path/to/bids:/data:ro \
+  -v /path/to/derivatives:/out \
+  fedlucchetti/mrsiprep:cpu \
+  /data /out participant \
   --participant-label S001 \
   --session-label V1 \
   --mode full \

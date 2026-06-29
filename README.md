@@ -1,15 +1,21 @@
-# MRSIPrep
+# *MRSIPrep*: A Robust Preprocessing Pipeline for Whole-Brain MRSI Data
 
-`MRSIPrep` is a preprocessing and derivative-generation pipeline for already
-quantified whole-brain MRSI maps. It is derived from the implementation in
-`MRSI-Metabolic-Connectome` and preserves the CHUV academic non-commercial
-research license.
+*MRSIPrep* is a preprocessing and derivative-generation pipeline for already
+quantified whole-brain MRSI maps, run as a BIDS App via Docker.
 
-The package does not perform spectral fitting. It expects quantified MRSI maps,
-quality maps, and T1w images. Its default light mode normalizes MRSI maps and
-uses fast SynthSeg cortical parcellation for parcelwise anatomical coverage and
-CRLB reporting. Full mode adds SynthSeg+FAST tissue maps, PETPVC, and
-Chimera/MNI-atlas regional profile extraction.
+[![Docker Pulls](https://img.shields.io/docker/pulls/fedlucchetti/mrsiprep)](https://hub.docker.com/r/fedlucchetti/mrsiprep)
+[![Documentation Status](https://app.readthedocs.org/projects/mrsiprep/badge/?version=latest)](https://mrsiprep.readthedocs.io/en/latest/)
+[![License: CHUV academic non-commercial](https://img.shields.io/badge/license-academic--non--commercial-blue)](LICENSE)
+
+## About
+
+`MRSIPrep` does not perform spectral fitting. It expects quantified MRSI maps,
+quality maps, and T1w images as input. Its default light mode normalizes MRSI
+maps and uses fast SynthSeg cortical parcellation for parcelwise anatomical
+coverage and CRLB reporting. Full mode adds SynthSeg+FAST tissue maps,
+PETPVC, and Chimera/MNI-atlas regional profile extraction. It is derived from
+the implementation in `MRSI-Metabolic-Connectome` and preserves the CHUV
+academic non-commercial research license.
 
 ## Pulling the published image
 
@@ -27,8 +33,16 @@ need to provide a BIDS dataset with already-quantified MRSI maps; see
 
 ## Minimal command
 
+All invocations run through Docker — there is no supported host installation
+of the `mrsiprep` CLI. Mount your BIDS dataset and derivatives directory and
+run the published or locally built image:
+
 ```bash
-mrsiprep /path/to/bids /path/to/derivatives participant \
+docker run --rm \
+  -v /path/to/bids:/data:ro \
+  -v /path/to/derivatives:/out \
+  fedlucchetti/mrsiprep:cpu \
+  /data /out participant \
   --participant-label S001 \
   --session-label V1 \
   --validate-only
@@ -39,7 +53,11 @@ starting an expensive batch run. It reports invalid recordings and exits without
 running SynthSeg, FAST, registration, parcellation, or PVC.
 
 ```bash
-mrsiprep /path/to/bids /path/to/derivatives participant \
+docker run --rm \
+  -v /path/to/bids:/data:ro \
+  -v /path/to/derivatives:/out \
+  fedlucchetti/mrsiprep:cpu \
+  /data /out participant \
   --participant-label S001 \
   --session-label V1 \
   --metabolites CrPCr GluGln GPCPCh NAANAAG Ins \
@@ -91,7 +109,11 @@ excluded from the brain mask.
 Full processing is selected explicitly:
 
 ```bash
-mrsiprep /path/to/bids /path/to/derivatives participant \
+docker run --rm \
+  -v /path/to/bids:/data:ro \
+  -v /path/to/derivatives:/out \
+  fedlucchetti/mrsiprep:cpu \
+  /data /out participant \
   --participant-label S001 --session-label V1 \
   --mode full \
   --tissue-backend synthseg-fast \
@@ -105,8 +127,9 @@ atlas. Full mode writes regional TSV output and a legacy-compatible
 
 ## Command-line argument reference
 
-`mrsiprep bids_dir output_dir participant [options]` — same positional
-arguments inside Docker, after the image name.
+`docker run --rm -v ... -v ... <image> bids_dir output_dir participant [options]`
+— `bids_dir`/`output_dir` are the container-internal mount paths (e.g. `/data`
+and `/out`), followed by the same options as below.
 
 ### Subjects, sessions, and acquisitions
 
@@ -197,27 +220,8 @@ arguments inside Docker, after the image name.
 
 ## Docker / BIDS App usage
 
-Docker packaging uses a private Ubuntu 22.04 CPU dependency image plus a thin
-MRSIPrep application image. The simplest private workflow builds the other
-dependencies, lets you enter the container to install FSL/FreeSurfer, and then
-commits the reusable dependency image:
-
-```bash
-docker/build_bootstrap.sh
-docker/enter_manual_deps.sh
-# Inside: bash /root/manual_install_fsl_freesurfer.sh, then exit
-docker/finalize_manual_deps.sh
-docker/build_cpu_image.sh
-```
-
-After Python code changes, rerun only `docker/update_mrsiprep_image.sh`; the
-external dependencies are reused from the reduced `mrsiprep-deps:cpu` image.
-The complete upstream installations remain in the private source image
-`mrsiprep-deps:ubuntu22.04-cpu`. See `docker/README.md` for private source and
-image-name configuration.
-
-Run it like fMRIPrep, using either the published image
-(`fedlucchetti/mrsiprep:cpu`) or your own local build (`mrsiprep:cpu`):
+Run it like fMRIPrep, mounting your BIDS dataset, derivatives directory, and
+a FreeSurfer license file:
 
 ```bash
 docker run --rm \
@@ -231,31 +235,6 @@ docker run --rm \
   --session-label V1 \
   --mode light \
   --nthreads 8
-```
-
-For the dummy dataset on this workstation:
-
-```bash
-docker run --rm \
-  -v /home/flucchetti/Connectome/BIDS/Dummy-Project:/data:ro \
-  -v /home/flucchetti/Connectome/BIDS/Dummy-Project/derivatives:/out \
-  -v /path/to/freesurfer/license.txt:/opt/freesurfer/license.txt:ro \
-  -e FS_LICENSE=/opt/freesurfer/license.txt \
-  mrsiprep:cpu \
-  /data /out participant \
-  --participant-label CHUVUP013 \
-  --session-label V1 \
-  --mode full \
-  --tissue-backend synthseg-fast \
-  --parcellation-mode mni \
-  --verbose 2 --nthreads 16 --nproc 1
-```
-
-To verify the installed external and Python dependencies:
-
-```bash
-docker/test_container.sh mrsiprep-deps:cpu
-docker/test_container.sh mrsiprep:cpu
 ```
 
 The PyQt import GUI is not included in the container and should be run on the

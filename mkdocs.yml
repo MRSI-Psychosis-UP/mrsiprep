@@ -31,6 +31,6 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Installation: installation.md
   - Usage: usage.md
-  - Docker: docker.md
   - Changelog: changelog.md
