@@ -18,6 +18,27 @@ PETPVC, and Chimera/MNI-atlas regional profile extraction.
 **Full documentation, installation, and usage instructions are on
 [Read the Docs](https://mrsiprep.readthedocs.io/en/latest/).**
 
+## Design Principles
+
+MRSIPrep was designed according to four main principles:
+
+- **Reproducibility** — distributed as open-source software, executed in
+  containerized environments to minimize differences across computing
+  platforms.
+- **Modularity** — each processing stage is an independent module, so users
+  can enable, disable, or replace specific steps according to their
+  acquisition protocol and scientific question.
+- **Transparency** — automated quality-control reports summarize spatial
+  registration, metabolite coverage, voxel-level quality metrics, tissue
+  composition, and atlas projection.
+- **Analysis agnosticism** — MRSIPrep does not impose a specific downstream
+  analysis; it generates standardized derivatives usable for voxelwise
+  analyses, regional analyses, metabolic connectomics, gradient mapping, or
+  machine-learning workflows.
+
+See [Read the Docs](https://mrsiprep.readthedocs.io/en/latest/) for the full
+workflow architecture and quality-control framework.
+
 ## Use Cases
 
 Code derived from this pipeline has been used in the following peer-reviewed

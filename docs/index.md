@@ -42,19 +42,65 @@ MRSIPrep runs in one of two modes, selected with `--mode`:
 Both modes share the same MRSI filtering, quality-masking, and T1w/MNI
 normalization machinery; full mode is a superset of light mode's outputs.
 
-## Principles
+## Design Principles
 
-- **BIDS-native.** Inputs are read from and outputs are written to a BIDS
-  dataset/derivatives layout, following BIDS-App conventions (`bids_dir
-  output_dir participant [options]`).
-- **Reproducible by default.** All external dependencies (ANTs, FreeSurfer,
-  FSL, PETPVC, Chimera) are pinned inside a single Docker image; there is no
-  supported host installation of the pipeline itself.
-- **Idempotent steps.** Each processing step checks for existing outputs and
-  skips recomputation unless an `--overwrite*` flag is passed, so batch runs
-  can be safely resumed.
-- **Quantification only.** MRSIPrep never performs spectral fitting — it
-  starts from already-quantified MRSI maps and quality maps.
+MRSIPrep was designed according to four main principles: reproducibility,
+modularity, transparency, and analysis agnosticism.
+
+### Reproducibility
+
+The framework is distributed as open-source software and can be executed in
+containerized environments to minimize differences across computing
+platforms.
+
+### Modularity
+
+Each processing stage is implemented as an independent module, allowing
+users to enable, disable, or replace specific steps according to their
+acquisition protocol and scientific question.
+
+### Transparency
+
+MRSIPrep generates automated quality-control reports summarizing spatial
+registration, metabolite coverage, voxel-level quality metrics, tissue
+composition, and atlas projection.
+
+### Analysis Agnosticism
+
+MRSIPrep does not impose a specific downstream analysis. Instead, it
+generates standardized derivatives that can be used for voxelwise analyses,
+regional analyses, metabolic connectomics, gradient mapping, or
+machine-learning workflows.
+
+## Workflow Architecture
+
+### Inputs
+
+MRSIPrep starts from quantified metabolite maps and associated quality
+metrics. Typical inputs include metabolite concentration maps, Cramér-Rao
+lower bound maps, signal-to-noise ratio maps, linewidth maps, anatomical
+T1-weighted images, tissue probability maps, and optional atlas files.
+
+### Processing Steps
+
+The core processing workflow includes:
+
+1. MRSI-BIDS-compatible data import.
+2. Voxelwise quality assessment.
+3. Brain masking and coverage estimation.
+4. Tissue fraction estimation.
+5. CSF and tissue correction.
+6. Spatial registration to anatomical and template spaces.
+7. Atlas projection and regional summary extraction.
+8. Generation of voxelwise, regional, and connectomics-ready derivatives.
+9. Automated quality-control reporting.
+
+## Quality-Control Framework
+
+MRSIPrep summarizes quality at the voxel, regional, and subject levels.
+Voxel inclusion can be based on metabolite-specific criteria such as
+linewidth, signal-to-noise ratio, Cramér-Rao lower bounds, tissue
+composition, and spatial coverage.
 
 ## License
 
