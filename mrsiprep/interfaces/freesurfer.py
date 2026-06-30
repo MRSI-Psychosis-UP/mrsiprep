@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
+
+from mrsiprep.utils.subprocess_utils import run_checked
 
 
 class FreeSurferError(RuntimeError):
@@ -38,10 +39,15 @@ def freesurfer_subject_id(t1_path: str | Path) -> str:
     path = Path(t1_path)
     name = path.name
     if name.endswith(".nii.gz"):
-        return name[:-7]
-    if name.endswith(".mgz"):
-        return name[:-4]
-    return path.stem
+        stem = name[:-7]
+    elif name.endswith(".mgz"):
+        stem = name[:-4]
+    else:
+        stem = path.stem
+    # Chimera derives its expected FreeSurfer subject ID by stripping only the
+    # final BIDS entity (the suffix, e.g. "T1w") from the filename, so the
+    # recon-all subject directory must match that convention exactly.
+    return stem.rsplit("_", 1)[0] if "_" in stem else stem
 
 
 def subject_dir_valid(fs_subjects_dir: str | Path, subject: str) -> bool:
@@ -58,7 +64,7 @@ def subject_dir_valid(fs_subjects_dir: str | Path, subject: str) -> bool:
     return all(path.exists() for path in required)
 
 
-def run_recon_all(t1_path: str | Path, fs_subjects_dir: str | Path, subject: str, force: bool = False, nthreads: int = 4, verbose: bool = False) -> Path:
+def run_recon_all(t1_path: str | Path, fs_subjects_dir: str | Path, subject: str, force: bool = False, nthreads: int = 4, verbose: bool = False, debug=None) -> Path:
     require_command("recon-all")
     check_license()
     fs_subjects_dir = Path(fs_subjects_dir)
@@ -66,16 +72,22 @@ def run_recon_all(t1_path: str | Path, fs_subjects_dir: str | Path, subject: str
     if force and subject_root.exists():
         shutil.rmtree(subject_root)
     if subject_dir_valid(fs_subjects_dir, subject) and not force:
+        if debug is not None:
+            debug.info(f"recon-all: reusing existing output for {subject}")
         return subject_root
     fs_subjects_dir.mkdir(parents=True, exist_ok=True)
     if subject_root.exists() and not force:
         cmd = ["recon-all", "-s", subject, "-all", "-sd", str(fs_subjects_dir), "-openmp", str(nthreads)]
     else:
         cmd = ["recon-all", "-s", subject, "-i", str(t1_path), "-all", "-sd", str(fs_subjects_dir), "-openmp", str(nthreads)]
-    subprocess.run(cmd, check=True, stdout=None if verbose else subprocess.PIPE, stderr=None if verbose else subprocess.PIPE, text=True)
+    if debug is not None:
+        debug.info(f"recon-all: starting -all reconstruction for {subject} ({nthreads} threads, this can take 1-3 hours)")
+    run_checked(cmd, verbose=verbose, error_cls=FreeSurferError, error_prefix="recon-all")
     if not subject_dir_valid(fs_subjects_dir, subject):
         raise FreeSurferError(
             f"recon-all finished but required outputs are missing for {subject}: "
             f"{fs_subjects_dir / subject}"
         )
+    if debug is not None:
+        debug.info(f"recon-all: finished for {subject}")
     return fs_subjects_dir / subject

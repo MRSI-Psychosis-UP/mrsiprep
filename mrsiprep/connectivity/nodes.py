@@ -7,8 +7,8 @@ from pathlib import Path
 import pandas as pd
 
 
-def build_nodes(regional_table: str | Path) -> pd.DataFrame:
-    df = pd.read_csv(regional_table, sep="\t")
+def build_nodes(regional_table: str | Path | pd.DataFrame) -> pd.DataFrame:
+    df = regional_table if isinstance(regional_table, pd.DataFrame) else pd.read_csv(regional_table, sep="\t")
     grouped = df.groupby(["parcel_id", "parcel_name", "hemisphere"], dropna=False).agg(
         coverage=("coverage", "mean"),
         gm_fraction=("mean_gm_fraction", "mean"),

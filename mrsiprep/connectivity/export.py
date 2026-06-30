@@ -28,6 +28,20 @@ def _connectivity_matrix_path(config, subject: str, session: str | None, atlas_n
     return out_dir / f"{prefix}_atlas-{atlas_name}{scale_entity}_npert-{n_perturbations}{processing_label}_desc-connectivity_mrsi.npz"
 
 
+def _filter_excluded_parcels(table: pd.DataFrame, exclude_patterns: str | None, max_parcel_id: int | None) -> pd.DataFrame:
+    if exclude_patterns:
+        patterns = [pattern.strip() for pattern in exclude_patterns.split(",") if pattern.strip()]
+        if patterns:
+            names = table["parcel_name"].astype(str)
+            mask = pd.Series(False, index=table.index)
+            for pattern in patterns:
+                mask |= names.str.contains(pattern, regex=False)
+            table = table[~mask]
+    if max_parcel_id is not None:
+        table = table[table["parcel_id"] < max_parcel_id]
+    return table
+
+
 def export_connectivity(
     config,
     subject: str,
@@ -41,7 +55,8 @@ def export_connectivity(
     gm_fraction_path: Path | None = None,
     scale: str | None = None,
 ) -> dict[str, Path]:
-    parcel_ids = sorted(pd.read_csv(regional_table, sep="\t")["parcel_id"].unique().tolist())
+    table = _filter_excluded_parcels(pd.read_csv(regional_table, sep="\t"), config.connectivity_exclude_parcels, config.connectivity_max_parcel_id)
+    parcel_ids = sorted(table["parcel_id"].unique().tolist())
     result = compute_metabolite_connectivity(
         metabolite_maps,
         crlb_maps,
@@ -72,6 +87,6 @@ def export_connectivity(
         sigma_scale=result.sigma_scale,
         gm_weighted=result.gm_weighted,
     )
-    build_nodes(regional_table).to_csv(nodes_tsv, sep="\t", index=False)
+    build_nodes(table).to_csv(nodes_tsv, sep="\t", index=False)
     build_edges(sim, config.connectivity_method).to_csv(edges_tsv, sep="\t", index=False)
     return {"matrix_npz": matrix_npz, "nodes": nodes_tsv, "edges": edges_tsv}

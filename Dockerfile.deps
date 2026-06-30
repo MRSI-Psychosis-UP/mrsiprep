@@ -10,6 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     MPLBACKEND=Agg \
     FREESURFER_HOME=/opt/freesurfer \
+    FREESURFER=/opt/freesurfer \
     SUBJECTS_DIR=/out/freesurfer \
     FS_LICENSE=/opt/freesurfer/license.txt \
     FSLDIR=/opt/fsl \

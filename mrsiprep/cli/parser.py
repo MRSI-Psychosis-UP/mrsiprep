@@ -14,80 +14,103 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("bids_dir", type=Path)
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("analysis_level", choices=["participant"])
-    parser.add_argument("--participant-label", nargs="+", default=[])
-    parser.add_argument("--session-label", nargs="+", default=[])
-    parser.add_argument("--participants", type=Path, default=None, help="TSV/CSV subject-session list.")
-    parser.add_argument("--b0", type=float, default=3.0, choices=[3.0, 7.0])
-    parser.add_argument("--metabolites", nargs="+", default=None)
-    parser.add_argument("--quality-metrics", nargs="+", default=["snr", "linewidth", "crlb"])
-    parser.add_argument("--snr-min", type=float, default=QUALITY_DEFAULTS["snr_min"])
-    parser.add_argument("--linewidth-max", type=float, default=QUALITY_DEFAULTS["linewidth_max"])
-    parser.add_argument("--crlb-max", type=float, default=QUALITY_DEFAULTS["crlb_max"])
 
-    parser.add_argument("--mode", "--processing-mode", dest="processing_mode", choices=["light", "full"], default="light")
+    selection = parser.add_argument_group("subject/session selection")
+    selection.add_argument("--participant-label", nargs="+", default=[])
+    selection.add_argument("--session-label", nargs="+", default=[])
+    selection.add_argument("--participants", type=Path, default=None, help="TSV/CSV subject-session list.")
 
-    parser.add_argument(
+    quality = parser.add_argument_group("quality thresholds")
+    quality.add_argument("--b0", type=float, default=3.0, choices=[3.0, 7.0])
+    quality.add_argument("--metabolites", nargs="+", default=None)
+    quality.add_argument("--quality-metrics", nargs="+", default=["snr", "linewidth", "crlb"])
+    quality.add_argument("--snr-min", type=float, default=QUALITY_DEFAULTS["snr_min"])
+    quality.add_argument("--linewidth-max", type=float, default=QUALITY_DEFAULTS["linewidth_max"])
+    quality.add_argument("--crlb-max", type=float, default=QUALITY_DEFAULTS["crlb_max"])
+
+    processing = parser.add_argument_group("processing mode")
+    processing.add_argument("--mode", "--processing-mode", dest="processing_mode", choices=["light", "full"], default="light")
+    processing.add_argument(
         "--tissue-backend",
         choices=["synthseg-fast", "existing", "none"],
         default="synthseg-fast",
         help="Tissue segmentation backend for PVC. 'none' disables tissue segmentation and PVC entirely.",
     )
-    parser.add_argument("--registration-backend", choices=["ants"], default="ants")
-    parser.add_argument("--normalization", choices=["simple", "ants-syn", "existing"], default="simple")
-    parser.add_argument("--output-spaces", nargs="+", default=["T1w", "MNI152NLin2009cAsym"])
-    parser.add_argument(
+
+    registration = parser.add_argument_group("registration and normalization")
+    registration.add_argument("--registration-backend", choices=["ants"], default="ants")
+    registration.add_argument("--normalization", choices=["simple", "ants-syn", "existing"], default="simple")
+    registration.add_argument("--output-spaces", nargs="+", default=["T1w", "MNI152NLin2009cAsym"])
+    registration.add_argument(
         "--mni-resolution",
         default="t1wres",
         help="MNI template resolution: 'origres' (MRSI native), 't1wres' (T1w native), or '<N>mm' (e.g. '2mm').",
     )
-    parser.add_argument("--registration-t1-target", choices=["brain-csf", "brain", "raw"], default=None)
-    parser.add_argument("--csf-pv-threshold", type=float, default=0.95)
-    parser.add_argument("--ref-met", default="CrPCr")
-    parser.add_argument("--t1", dest="t1_pattern", default="desc-brain_T1w")
+    registration.add_argument("--registration-t1-target", choices=["brain-csf", "brain", "raw"], default=None)
+    registration.add_argument("--csf-pv-threshold", type=float, default=0.95)
+    registration.add_argument("--ref-met", default="CrPCr")
+    registration.add_argument("--t1", dest="t1_pattern", default="desc-brain_T1w")
 
-    parser.add_argument("--parcellation-mode", choices=["synthseg", "chimera", "mni"], default=None)
-    parser.add_argument("--synthseg-mode", choices=["fast", "standard", "robust"], default="robust")
-    parser.add_argument("--chimera-scheme", default="LFMIHIFIS")
-    parser.add_argument("--chimera-scale", type=_parse_scale, default=3)
-    parser.add_argument("--chimera-grow", type=int, default=2)
-    parser.add_argument("--atlas", default="chimera-LFMIHIFIS-3")
-    parser.add_argument("--custom-atlas", type=Path, default=None)
-    parser.add_argument("--custom-atlas-lut", type=Path, default=None)
-    parser.add_argument("--fs-subjects-dir", type=Path, default=None)
+    parcellation = parser.add_argument_group("parcellation")
+    parcellation.add_argument("--parcellation-mode", choices=["synthseg", "chimera", "mni"], default=None)
+    parcellation.add_argument("--synthseg-mode", choices=["fast", "standard", "robust"], default="robust")
+    parcellation.add_argument("--chimera-scheme", default="LFMIHIFIFF")
+    parcellation.add_argument("--chimera-scale", type=_parse_scale, default=3)
+    parcellation.add_argument("--chimera-grow", type=int, default=2)
+    parcellation.add_argument("--atlas", default="chimera-LFMIHIFIS-3")
+    parcellation.add_argument("--custom-atlas", type=Path, default=None)
+    parcellation.add_argument("--custom-atlas-lut", type=Path, default=None)
+    parcellation.add_argument("--fs-subjects-dir", type=Path, default=None)
 
-    parser.add_argument("--write-connectivity", action="store_true")
-    parser.add_argument("--connectivity-method", choices=["pearson", "spearman", "cosine", "euclidean_distance"], default="spearman")
-    parser.add_argument("--connectivity-space", choices=["MRSI", "T1w", "MNI"], default="MRSI")
-    parser.add_argument("--connectivity-n-perturbations", type=int, default=50, help="Number of CRLB-scaled noise perturbations per metabolite used to build the connectivity similarity matrix.")
-    parser.add_argument("--connectivity-sigma-scale", type=float, default=2.0, help="Scale factor applied to the CRLB-derived noise sigma when perturbing metabolite maps for connectivity.")
-    parser.add_argument("--regional-summary", choices=["mean", "median", "weighted_mean"], default="mean")
+    connectivity = parser.add_argument_group("connectivity")
+    connectivity.add_argument("--write-connectivity", action="store_true")
+    connectivity.add_argument("--connectivity-method", choices=["pearson", "spearman", "cosine", "euclidean_distance"], default="spearman")
+    connectivity.add_argument("--connectivity-space", choices=["MRSI", "T1w", "MNI"], default="MRSI")
+    connectivity.add_argument("--connectivity-n-perturbations", type=int, default=50, help="Number of CRLB-scaled noise perturbations per metabolite used to build the connectivity similarity matrix.")
+    connectivity.add_argument("--connectivity-sigma-scale", type=float, default=2.0, help="Scale factor applied to the CRLB-derived noise sigma when perturbing metabolite maps for connectivity.")
+    connectivity.add_argument(
+        "--connectivity-exclude-parcels",
+        default=None,
+        help="Comma-separated substrings; parcels whose name contains any of them are excluded from the connectivity matrix (e.g. 'wm-lh,cer-').",
+    )
+    connectivity.add_argument(
+        "--connectivity-max-parcel-id",
+        type=int,
+        default=None,
+        help="Exclude parcels whose label/ID is greater than or equal to this value from the connectivity matrix.",
+    )
+    connectivity.add_argument("--regional-summary", choices=["mean", "median", "weighted_mean"], default="mean")
 
-    parser.add_argument("--transform", default="", help="Legacy output transform override; prefer --output-spaces.")
-    parser.add_argument("--no-filter", action="store_true")
-    parser.add_argument("--spikepc", type=float, default=99.0)
-    parser.add_argument("--no-pvc", action="store_true")
-    parser.add_argument("--proc-mnilong", action="store_true")
-    parser.add_argument("--transform-spikemask", action="store_true", help="Also transform per-metabolite spike masks into T1w/MNI space.")
-    parser.add_argument("--nthreads", type=int, default=16, help="ANTs/ITK thread count per subject/session process.")
-    parser.add_argument(
+    processing_control = parser.add_argument_group("processing control")
+    processing_control.add_argument("--transform", default="", help="Legacy output transform override; prefer --output-spaces.")
+    processing_control.add_argument("--no-filter", action="store_true")
+    processing_control.add_argument("--spikepc", type=float, default=99.0)
+    processing_control.add_argument("--no-pvc", action="store_true")
+    processing_control.add_argument("--proc-mnilong", action="store_true")
+    processing_control.add_argument("--transform-spikemask", action="store_true", help="Also transform per-metabolite spike masks into T1w/MNI space.")
+    processing_control.add_argument("--nthreads", type=int, default=16, help="ANTs/ITK thread count per subject/session process.")
+    processing_control.add_argument(
         "--nproc",
         type=int,
         default=1,
         help="Number of subject/session recordings to process in parallel. Each parallel process gets --nthreads threads; "
         "if nproc*nthreads exceeds the available CPU count, --nthreads is coerced down and a warning is shown at startup.",
     )
-    parser.add_argument("--work-dir", type=Path, default=None)
+    processing_control.add_argument("--work-dir", type=Path, default=None)
 
-    parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument("--overwrite-filt", action="store_true")
-    parser.add_argument("--overwrite-seg", action="store_true", help="Force recompute of tissue segmentation (SynthSeg brain extraction + dseg/probseg), even if cached outputs exist.")
-    parser.add_argument("--overwrite-pve", action="store_true")
-    parser.add_argument("--overwrite-t1-reg", action="store_true")
-    parser.add_argument("--overwrite-mni-reg", action="store_true")
-    parser.add_argument("--overwrite-transform", action="store_true")
-    parser.add_argument("--validate-only", action="store_true", help="Check selected subject/session inputs and exit without running preprocessing.")
-    parser.add_argument("--check-external-libs", action="store_true", help="Verify required external binaries are available and exit.")
-    parser.add_argument(
+    overwrite = parser.add_argument_group("overwrite/recompute")
+    overwrite.add_argument("--overwrite", action="store_true")
+    overwrite.add_argument("--overwrite-filt", action="store_true")
+    overwrite.add_argument("--overwrite-seg", action="store_true", help="Force recompute of tissue segmentation (SynthSeg brain extraction + dseg/probseg), even if cached outputs exist.")
+    overwrite.add_argument("--overwrite-pve", action="store_true")
+    overwrite.add_argument("--overwrite-t1-reg", action="store_true")
+    overwrite.add_argument("--overwrite-mni-reg", action="store_true")
+    overwrite.add_argument("--overwrite-transform", action="store_true")
+
+    runtime = parser.add_argument_group("runtime")
+    runtime.add_argument("--validate-only", action="store_true", help="Check selected subject/session inputs and exit without running preprocessing.")
+    runtime.add_argument("--check-external-libs", action="store_true", help="Verify required external binaries are available and exit.")
+    runtime.add_argument(
         "--verbose",
         "-v",
         type=int,
@@ -140,6 +163,8 @@ def parse_args(argv: list[str] | None = None) -> MRSIPrepConfig:
         connectivity_space=args.connectivity_space,
         connectivity_n_perturbations=args.connectivity_n_perturbations,
         connectivity_sigma_scale=args.connectivity_sigma_scale,
+        connectivity_exclude_parcels=args.connectivity_exclude_parcels,
+        connectivity_max_parcel_id=args.connectivity_max_parcel_id,
         regional_summary=args.regional_summary,
         transform=args.transform,
         filter_biharmonic=not args.no_filter,

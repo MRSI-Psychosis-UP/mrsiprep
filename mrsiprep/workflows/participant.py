@@ -11,6 +11,7 @@ from pathlib import Path
 from rich import box
 from rich.table import Table
 
+from mrsiprep.interfaces.freesurfer import freesurfer_subject_id, subject_dir_valid
 from mrsiprep.io.bids import BIDSLayout, Recording
 from mrsiprep.io.derivatives import init_derivative
 from mrsiprep.io.loaders import load_mrsi_inputs
@@ -71,6 +72,9 @@ def _gather_input_availability(config, subject: str, session: str | None) -> dic
     inputs = load_mrsi_inputs(layout, subject, session, config.metabolites)
     total_expected = len(config.metabolites)
     found_count = len(inputs.metabolite_maps)
+    crlb_found_count = len(inputs.crlb_maps)
+    snr_status = bool(inputs.snr_map)
+    fwhm_status = bool(inputs.linewidth_map)
 
     brainmask_status = bool(inputs.brainmask)
     if config.tissue_backend == "existing":
@@ -85,10 +89,22 @@ def _gather_input_availability(config, subject: str, session: str | None) -> dic
     else:
         tissue_label = "[cyan]AUTO[/cyan]"
 
+    # t1-template/template-mni (longitudinal ses-all templating) are not yet
+    # implemented by any workflow, so they're excluded from the preflight
+    # table until that feature exists and can be opted into.
     transforms = {}
-    for stage in ("mrsi", "anat", "t1-template", "template-mni"):
+    for stage in ("mrsi", "anat"):
         stage_paths = layout.transform(subject, session, stage)
         transforms[stage] = bool(stage_paths and all(path.exists() for path in stage_paths))
+
+    freesurfer_status: bool | None = None
+    if config.processing_mode == "full" and config.parcellation_mode == "chimera":
+        raw_t1 = layout.raw_t1(subject, session)
+        if raw_t1 is not None:
+            fs_subject = freesurfer_subject_id(raw_t1)
+            freesurfer_status = subject_dir_valid(config.freesurfer_dir, fs_subject)
+        else:
+            freesurfer_status = False
 
     return {
         "recording_id": recording_id,
@@ -97,9 +113,13 @@ def _gather_input_availability(config, subject: str, session: str | None) -> dic
         "t1": t1_status,
         "mrsi_found": found_count,
         "mrsi_expected": total_expected,
+        "crlb_found": crlb_found_count,
+        "snr": snr_status,
+        "fwhm": fwhm_status,
         "brainmask": brainmask_status,
         "tissue": tissue_label,
         "transforms": transforms,
+        "freesurfer": freesurfer_status,
     }
 
 
@@ -111,18 +131,23 @@ def _render_preflight_table(config, summaries: list[dict], debug: Debug) -> None
     transform_columns = [
         ("mrsi", "MRSI→T1"),
         ("anat", "T1→MNI"),
-        ("t1-template", "T1→Template"),
-        ("template-mni", "Template→MNI"),
     ]
+
+    show_freesurfer = any(row["freesurfer"] is not None for row in summaries)
 
     table = Table(box=box.SIMPLE_HEAVY, show_lines=False, title="Input availability summary")
     table.add_column("Recording", style="cyan", no_wrap=True)
-    table.add_column("T1w ref", justify="center")
-    table.add_column("MRSI files", justify="center")
-    table.add_column("Brainmask", justify="center")
-    table.add_column("Tissue files", justify="center")
+    table.add_column("T1w ref", justify="center", no_wrap=True)
+    table.add_column("MRSI files", justify="center", no_wrap=True)
+    table.add_column("CRLB", justify="center", no_wrap=True)
+    table.add_column("SNR", justify="center", no_wrap=True)
+    table.add_column("FWHM", justify="center", no_wrap=True)
+    table.add_column("Brainmask", justify="center", no_wrap=True)
+    table.add_column("Tissue files", justify="center", no_wrap=True)
+    if show_freesurfer:
+        table.add_column("FreeSurfer", justify="center", no_wrap=True)
     for _, label in transform_columns:
-        table.add_column(label, justify="center")
+        table.add_column(label, justify="center", no_wrap=True)
 
     missing_count = 0
     total_missing_files = 0
@@ -134,22 +159,32 @@ def _render_preflight_table(config, summaries: list[dict], debug: Debug) -> None
     for row in summaries:
         mrsi_color = "green" if row["mrsi_found"] == row["mrsi_expected"] else "red"
         mrsi_cell = f"[{mrsi_color}]{row['mrsi_found']}/{row['mrsi_expected']}[/{mrsi_color}]"
+        crlb_color = "green" if row["crlb_found"] == row["mrsi_expected"] else "red"
+        crlb_cell = f"[{crlb_color}]{row['crlb_found']}/{row['mrsi_expected']}[/{crlb_color}]"
         t1_cell = CHECK_MARK if row["t1"] else CROSS_MARK
+        snr_cell = CHECK_MARK if row["snr"] else CROSS_MARK
+        fwhm_cell = CHECK_MARK if row["fwhm"] else CROSS_MARK
         brainmask_cell = CHECK_MARK if row["brainmask"] else PROC_MARK
 
         row_cells = [
             row["recording_id"],
             t1_cell,
             mrsi_cell,
+            crlb_cell,
+            snr_cell,
+            fwhm_cell,
             brainmask_cell,
             row["tissue"],
         ]
 
-        for stage_key, _ in transform_columns:
-            if not row["session"] and stage_key in {"t1-template", "template-mni"}:
+        if show_freesurfer:
+            if row["freesurfer"] is None:
                 row_cells.append(NA_MARK)
             else:
-                row_cells.append(CHECK_MARK if row["transforms"].get(stage_key, False) else PROC_MARK)
+                row_cells.append(CHECK_MARK if row["freesurfer"] else PROC_MARK)
+
+        for stage_key, _ in transform_columns:
+            row_cells.append(CHECK_MARK if row["transforms"].get(stage_key, False) else PROC_MARK)
 
         table.add_row(*row_cells)
 
@@ -158,6 +193,12 @@ def _render_preflight_table(config, summaries: list[dict], debug: Debug) -> None
             missing_items.append("T1w")
         if row["mrsi_found"] != row["mrsi_expected"]:
             missing_items.append(f"MRSI {row['mrsi_found']}/{row['mrsi_expected']}")
+        if "crlb" in config.quality_metrics and row["crlb_found"] != row["mrsi_expected"]:
+            missing_items.append(f"CRLB {row['crlb_found']}/{row['mrsi_expected']}")
+        if "snr" in config.quality_metrics and not row["snr"]:
+            missing_items.append("SNR")
+        if "linewidth" in config.quality_metrics and not row["fwhm"]:
+            missing_items.append("FWHM")
         if config.processing_mode == "full" and config.tissue_backend == "existing" and "red" in row["tissue"]:
             missing_items.append("Tissue")
 
@@ -290,7 +331,6 @@ def validate_participant_inputs(config) -> list[RecordingStatus]:
                 "brainmask": inputs.brainmask,
             }
             statuses.append(RecordingStatus(subject, session, "success", outputs=outputs))
-            debug.success("VALID", f"sub-{subject}", f"ses-{session}" if session else "")
         except Exception as exc:
             statuses.append(RecordingStatus(subject, session, "failed", error=str(exc)))
             debug.error("INVALID", f"sub-{subject}", f"ses-{session}" if session else "", str(exc))
@@ -311,17 +351,12 @@ def _validate_backend_inputs(config, subject: str, session: str | None) -> None:
             raise FileNotFoundError("--custom-atlas-lut is required for --parcellation-mode mni --atlas custom")
 
 
-def run_single_recording(config, subject: str, session: str | None) -> dict:
-    subject = normalize_subject(subject)
-    session = normalize_session(session)
-    LOGGER.info("Processing sub-%s%s", subject, f" ses-{session}" if session else "")
-    debug = Debug(verbose=config.verbose)
+def _step_tissue_segmentation(config, subject, session, raw_t1, t1_path, debug):
+    """Light mode: SynthSeg brain extraction. Full+synthseg-fast: SynthSeg+FAST inputs.
 
-    t1_path, inputs = validate_recording(config, subject, session)
-    layout = BIDSLayout(config.bids_dir)
-    raw_t1 = layout.raw_t1(subject, session)
-    if raw_t1 is None:
-        raise FileNotFoundError(f"Missing raw T1w required for MRSIPrep: sub-{subject} ses-{session}")
+    Returns (t1_path, precomputed_tissue_t1, p3_override, brain_mask_override),
+    where t1_path may be overridden from the input value.
+    """
     precomputed_tissue_t1 = None
     p3_override = None
     brain_mask_override = None
@@ -338,34 +373,45 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
             t1_path = synthseg_fast_brain_path(config, subject, session)
             brain_mask_override = synthseg_fast_brain_mask_path(config, subject, session)
             p3_override = synthseg_fast_csf_probseg_path(config, subject, session)
+    return t1_path, precomputed_tissue_t1, p3_override, brain_mask_override
 
+
+def _step_anatomical_prep(config, subject, session, t1_path, p3_override, brain_mask_override, debug):
     with debug.step("Anatomical preparation"):
-        anat = prepare_anatomical(config, subject, session, t1_path, p3_override=p3_override, brain_mask_override=brain_mask_override)
+        return prepare_anatomical(config, subject, session, t1_path, p3_override=p3_override, brain_mask_override=brain_mask_override)
 
+
+def _step_mrsi_preprocessing(config, subject, session, inputs, debug):
     with debug.step("MRSI preprocessing"):
         mrsi = run_mrsi_workflow(config, subject, session, inputs)
         qc_report_mrsi_preproc = write_mrsi_preproc_qc_report(config, subject, session, mrsi.raw_maps, mrsi.preproc_maps)
+    return mrsi, qc_report_mrsi_preproc
 
+
+def _step_registration(config, subject, session, mrsi, anat, debug):
     with debug.step("MRSI-T1w-MNI registration"):
-        registration = run_registration_workflow(config, subject, session, mrsi.reference, anat.registration_t1w, anat.registration_mask)
+        return run_registration_workflow(config, subject, session, mrsi.reference, anat.registration_t1w, anat.registration_mask)
 
-    tissue = None
-    if config.processing_mode == "full":
-        with debug.step("Tissue probability maps in MRSI space"):
-            tissue = run_tissue_workflow(
-                config,
-                subject,
-                session,
-                anat.registration_t1w,
-                anat.registration_mask,
-                mrsi.reference,
-                registration.mrsi_to_t1.inverse,
-                precomputed_tissue_t1=precomputed_tissue_t1,
-            )
 
-    dseg_for_qc = synthseg_native_labels_path(config, subject, session) if config.processing_mode == "full" and config.tissue_backend == "synthseg-fast" else None
-    qc_report_tissue = write_tissue_qc_report(config, subject, session, raw_t1, dseg_for_qc, tissue.t1 if tissue is not None else None)
+def _step_tissue_probmaps(config, subject, session, anat, mrsi, registration, precomputed_tissue_t1, debug):
+    if config.processing_mode != "full":
+        return None
+    with debug.step("Tissue probability maps in MRSI space"):
+        return run_tissue_workflow(
+            config,
+            subject,
+            session,
+            anat.registration_t1w,
+            anat.registration_mask,
+            mrsi.reference,
+            registration.mrsi_to_t1.inverse,
+            precomputed_tissue_t1=precomputed_tissue_t1,
+        )
 
+
+def _step_pvc(config, subject, session, mrsi, tissue, debug):
+    """Returns (corrected_maps, tissue_4d). corrected_maps defaults to
+    mrsi.preproc_maps unchanged when full-mode PVC is not applicable."""
     corrected_maps = mrsi.preproc_maps
     tissue_4d = None
     if config.processing_mode == "full" and not config.no_pvc:
@@ -374,7 +420,10 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
             tissue_4d = create_tissue_4d(config, subject, session, tissue.mrsi, mrsi.reference)
             corrected_maps = run_pvc(config, subject, session, mrsi.preproc_maps, tissue_4d, mrsi.brainmask)
             mrsi.corrected_maps = corrected_maps
+    return corrected_maps, tissue_4d
 
+
+def _step_resampling(config, subject, session, anat, mrsi, registration, corrected_maps, raw_t1, debug):
     with debug.step("Resampling MRSI maps to T1w/MNI space"):
         transformed = transform_mrsi_maps(
             config,
@@ -401,7 +450,10 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
             orig_ref_map_path=corrected_maps.get(config.ref_met),
             mrsi_to_t1_transforms=registration.mrsi_to_t1.forward,
         )
+    return transformed, qc_report_registration
 
+
+def _step_synthseg_parcellation_qc(config, subject, session, raw_t1, mrsi, registration, debug):
     with debug.step("SynthSeg parcellation and QC"):
         preliminary_parcels = run_synthseg_parcellation(
             config,
@@ -422,6 +474,12 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
             mrsi.crlb_maps,
             mrsi.qcmasks,
         )
+    return preliminary_parcels, parcel_qc
+
+
+def _step_parcellation(config, subject, session, raw_t1, mrsi, anat, registration, preliminary_parcels, debug):
+    """Returns (parcels, qc_report_parcellation). parcels defaults to the
+    preliminary SynthSeg parcellation outside full mode."""
     parcels = preliminary_parcels
     qc_report_parcellation = None
     if config.processing_mode == "full":
@@ -436,9 +494,12 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
                 t1_reference=anat.registration_t1w,
             )
             qc_report_parcellation = write_parcellation_qc_report(config, subject, session, raw_t1, parcels.atlas_t1, parcels.labels)
+    return parcels, qc_report_parcellation
 
+
+def _step_regional_extraction(config, subject, session, corrected_maps, parcels, mrsi, tissue, debug):
     with debug.step("Regional metabolite extraction"):
-        regional = extract_regional_metabolites(
+        return extract_regional_metabolites(
             config,
             subject,
             session,
@@ -451,6 +512,8 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
             tissue.mrsi if tissue is not None else {},
         )
 
+
+def _step_connectivity(config, subject, session, regional, parcels, corrected_maps, mrsi, tissue, debug):
     with debug.step("Connectivity", live=False):
         connectivity = run_connectivity_workflow(
             config,
@@ -464,19 +527,63 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
             gm_fraction_path=tissue.mrsi.get("GM") if tissue is not None else None,
         )
         qc_report_connectivity = write_connectivity_qc_report(config, subject, session, connectivity.get("matrix_tsv"))
+    return connectivity, qc_report_connectivity
 
-    metprofiles = None
-    if config.processing_mode == "full":
-        metprofiles = export_metprofile_npz(
-            config,
-            subject,
-            session,
-            corrected_maps,
-            mrsi.water_map,
-            parcels,
-            regional,
-            anat.registration_mask,
-        )
+
+def _step_metprofiles(config, subject, session, corrected_maps, mrsi, parcels, regional, anat):
+    if config.processing_mode != "full":
+        return None
+    return export_metprofile_npz(
+        config,
+        subject,
+        session,
+        corrected_maps,
+        mrsi.water_map,
+        parcels,
+        regional,
+        anat.registration_mask,
+    )
+
+
+def _step_reports(config, subject, session, outputs, debug):
+    with debug.step("Reports"):
+        report = run_reports_workflow(config, subject, session, outputs)
+        outputs["report"] = report
+        outputs["qc_report_combined"] = combine_qc_reports(config, subject, session)
+        for key in ("qc_report_tissue", "qc_report_mrsi_preproc", "qc_report_registration", "qc_report_parcellation", "qc_report_connectivity"):
+            outputs.pop(key, None)
+    return outputs
+
+
+def run_single_recording(config, subject: str, session: str | None) -> dict:
+    subject = normalize_subject(subject)
+    session = normalize_session(session)
+    LOGGER.info("Processing sub-%s%s", subject, f" ses-{session}" if session else "")
+    debug = Debug(verbose=config.verbose)
+
+    t1_path, inputs = validate_recording(config, subject, session)
+    layout = BIDSLayout(config.bids_dir)
+    raw_t1 = layout.raw_t1(subject, session)
+    if raw_t1 is None:
+        raise FileNotFoundError(f"Missing raw T1w required for MRSIPrep: sub-{subject} ses-{session}")
+
+    t1_path, precomputed_tissue_t1, p3_override, brain_mask_override = _step_tissue_segmentation(config, subject, session, raw_t1, t1_path, debug)
+    anat = _step_anatomical_prep(config, subject, session, t1_path, p3_override, brain_mask_override, debug)
+    mrsi, qc_report_mrsi_preproc = _step_mrsi_preprocessing(config, subject, session, inputs, debug)
+    registration = _step_registration(config, subject, session, mrsi, anat, debug)
+    tissue = _step_tissue_probmaps(config, subject, session, anat, mrsi, registration, precomputed_tissue_t1, debug)
+
+    dseg_for_qc = synthseg_native_labels_path(config, subject, session) if config.processing_mode == "full" and config.tissue_backend == "synthseg-fast" else None
+    qc_report_tissue = write_tissue_qc_report(config, subject, session, raw_t1, dseg_for_qc, tissue.t1 if tissue is not None else None)
+
+    corrected_maps, tissue_4d = _step_pvc(config, subject, session, mrsi, tissue, debug)
+    transformed, qc_report_registration = _step_resampling(config, subject, session, anat, mrsi, registration, corrected_maps, raw_t1, debug)
+    preliminary_parcels, parcel_qc = _step_synthseg_parcellation_qc(config, subject, session, raw_t1, mrsi, registration, debug)
+    parcels, qc_report_parcellation = _step_parcellation(config, subject, session, raw_t1, mrsi, anat, registration, preliminary_parcels, debug)
+    regional = _step_regional_extraction(config, subject, session, corrected_maps, parcels, mrsi, tissue, debug)
+    connectivity, qc_report_connectivity = _step_connectivity(config, subject, session, regional, parcels, corrected_maps, mrsi, tissue, debug)
+    metprofiles = _step_metprofiles(config, subject, session, corrected_maps, mrsi, parcels, regional, anat)
+
     outputs = {
         "t1w": anat.t1w,
         "registration_t1w": anat.registration_t1w,
@@ -496,12 +603,7 @@ def run_single_recording(config, subject: str, session: str | None) -> dict:
         "qc_report_parcellation": qc_report_parcellation,
         "qc_report_connectivity": qc_report_connectivity,
     }
-    with debug.step("Reports"):
-        report = run_reports_workflow(config, subject, session, outputs)
-        outputs["report"] = report
-        outputs["qc_report_combined"] = combine_qc_reports(config, subject, session)
-        for key in ("qc_report_tissue", "qc_report_mrsi_preproc", "qc_report_registration", "qc_report_parcellation", "qc_report_connectivity"):
-            outputs.pop(key, None)
+    outputs = _step_reports(config, subject, session, outputs, debug)
     outputs["provenance"] = write_provenance(
         config,
         config.derivative_dir / f"sub-{subject}" / (f"ses-{session}" if session else "ses-none") / "mrsiprep_provenance.json",

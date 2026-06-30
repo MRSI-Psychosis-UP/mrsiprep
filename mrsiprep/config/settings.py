@@ -44,6 +44,8 @@ class MRSIPrepConfig:
     connectivity_space: str = "MRSI"
     connectivity_n_perturbations: int = 50
     connectivity_sigma_scale: float = 2.0
+    connectivity_exclude_parcels: str | None = None
+    connectivity_max_parcel_id: int | None = None
     regional_summary: str = "mean"
     nthreads: int = 16
     nproc: int = 1

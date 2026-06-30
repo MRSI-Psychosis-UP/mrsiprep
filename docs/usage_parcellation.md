@@ -18,7 +18,7 @@ docker run --rm \
   --mode full \
   --tissue-backend synthseg-fast \
   --parcellation-mode chimera \
-  --chimera-scheme LFMIHIFIS --chimera-scale 3
+  --chimera-scheme LFMIHIFIFF --chimera-scale 3
 ```
 
 Chimera parcellation requires `recon-all` and a valid `FS_LICENSE` — mount a
@@ -74,7 +74,7 @@ quantification uncertainty into the connectivity estimate.
 | `--atlas` | `chimera-LFMIHIFIS-3` | Bundled MNI atlas name (used with `--parcellation-mode mni`). |
 | `--custom-atlas` | none | Path to a custom atlas NIfTI. |
 | `--custom-atlas-lut` | none | Path to the lookup table for `--custom-atlas`. |
-| `--chimera-scheme` | `LFMIHIFIS` | Chimera parcellation scheme. |
+| `--chimera-scheme` | `LFMIHIFIFF` | Chimera parcellation scheme: a 10-character code, one letter per supra-region (cortical, subcortical, thalamus, amygdala, hippocampus, hypothalamus, cerebellum, brainstem, gyral WM, WM). |
 | `--chimera-scale` | `3` | Chimera parcellation scale. |
 | `--chimera-grow` | `2` | Chimera region-growing parameter. |
 | `--regional-summary` | `mean`, `median`, `weighted_mean` / `mean` | How voxel values are summarized per parcel. |
@@ -83,3 +83,5 @@ quantification uncertainty into the connectivity estimate.
 | `--connectivity-space` | `MRSI`, `T1w`, `MNI` / `MRSI` | Space the connectivity matrix is computed in. |
 | `--connectivity-n-perturbations` | `50` | Number of CRLB-scaled noise perturbations per metabolite used to build the connectivity matrix. |
 | `--connectivity-sigma-scale` | `2.0` | Scale factor applied to the CRLB-derived noise sigma when perturbing metabolite maps for connectivity. |
+| `--connectivity-exclude-parcels` | none | Comma-separated substrings; parcels whose name contains any of them are excluded from the connectivity matrix (e.g. `wm-lh,cer-`). |
+| `--connectivity-max-parcel-id` | none | Exclude parcels whose label/ID is greater than or equal to this value from the connectivity matrix. |

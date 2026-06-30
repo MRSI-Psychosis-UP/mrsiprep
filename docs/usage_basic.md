@@ -45,6 +45,12 @@ docker run --rm \
 segmentation, registration, parcellation, or PVC step starts. Use it before
 starting an expensive batch run.
 
+The preflight table shows, per recording: T1w reference, MRSI file count,
+CRLB/SNR/FWHM quality map availability, brainmask, tissue files, a
+FreeSurfer column (shown only in full mode with Chimera parcellation,
+indicating whether a valid prior `recon-all` output already exists and will
+be reused), and the MRSI→T1/T1→MNI transform status.
+
 ## Verbosity, logging, and parallel processing
 
 ```bash
@@ -67,7 +73,11 @@ docker run --rm \
   anatomical prep, MRSI preprocessing, registration, tissue maps, PVC,
   resampling, parcellation, regional extraction, connectivity, reports), with
   no per-step detail.
-- `2` — also prints step-level detail (info/success/warning/error messages).
+- `2` — also prints step-level detail (info/success/warning/error messages),
+  including Chimera milestone markers (`processing supra-region: ...`,
+  `starting cortical parcellation fusion`) so a single-threaded Chimera run —
+  which can otherwise sit silently for 10-20+ minutes — shows visible
+  progress.
 - `3` — also lets ANTs, `recon-all`, and `mri_synthseg` print their own raw
   subprocess output instead of being captured.
 
@@ -195,7 +205,7 @@ docker run --rm \
 <out>/mrsiprep/sub-*/ses-*/qmasks/         QC, spike, and brain masks
 <out>/mrsiprep/sub-*/ses-*/anat/           T1w tissue, SynthSeg, and registration files
 <out>/mrsiprep/sub-*/ses-*/transforms/     ANTs MRSI→T1w and T1w→MNI transforms
-<out>/chimera-atlases/sub-*/ses-*/anat/    Chimera atlas outputs
+<out>/chimera/sub-*/ses-*/anat/              raw Chimera atlas outputs (one scheme/scale per file)
 <out>/mrsiprep/sub-*/ses-*/connectomics/   matrices, nodes, and edges
 <out>/mrsi_parcel/sub-*/ses-*/mrsi/        full-mode metabolite profile NPZ files
 <out>/mrsiprep/logs/                       full-detail timestamped run logs (independent of --verbose)

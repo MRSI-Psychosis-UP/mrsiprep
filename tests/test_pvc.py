@@ -31,7 +31,7 @@ class PVCTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "", "")
 
             with patch("mrsiprep.mrsi.pvc.shutil.which", return_value="/usr/bin/petpvc"), patch(
-                "mrsiprep.mrsi.pvc.subprocess.run", side_effect=fake_petpvc
+                "mrsiprep.mrsi.pvc.run_checked", side_effect=fake_petpvc
             ):
                 outputs = run_pvc(config, "S001", "V1", {"CrPCr": metabolite}, tissue, brainmask)
 
@@ -48,10 +48,10 @@ class PVCTests(unittest.TestCase):
             nib.save(image, brainmask)
             nib.save(nib.Nifti1Image(np.ones((2, 2, 2, 3), dtype=np.float32), np.eye(4)), tissue)
             config = SimpleNamespace(derivative_dir=root / "derivatives", overwrite=False, overwrite_pve=False)
-            failure = subprocess.CalledProcessError(1, ["petpvc"], stderr="cannot write output")
+            failure = subprocess.CompletedProcess(["petpvc"], 1, "", "cannot write output")
 
             with patch("mrsiprep.mrsi.pvc.shutil.which", return_value="/usr/bin/petpvc"), patch(
-                "mrsiprep.mrsi.pvc.subprocess.run", side_effect=failure
+                "mrsiprep.mrsi.pvc.run_checked", return_value=failure
             ):
                 with self.assertRaisesRegex(PVCError, "cannot write output"):
                     run_pvc(config, "S001", "V1", {"CrPCr": metabolite}, tissue, brainmask)

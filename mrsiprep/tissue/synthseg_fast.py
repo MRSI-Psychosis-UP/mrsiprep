@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import nibabel as nib
@@ -13,6 +12,7 @@ from nibabel.processing import resample_from_to
 from mrsiprep.interfaces.fsl import run_fast
 from mrsiprep.io.naming import anat_derivative
 from mrsiprep.utils.images import save_nifti
+from mrsiprep.utils.subprocess_utils import run_checked
 
 
 VENTRICLE_LABELS = {4, 5, 14, 15, 43, 44}
@@ -126,14 +126,7 @@ def _run_or_load_synthseg(config, t1_path: Path, work_dir: Path, subject: str, s
     if not synthseg_labels.exists() or config.overwrite_seg or config.overwrite:
         synthseg_cmd = _find_mri_synthseg()
         command = _synthseg_command(config, synthseg_cmd, t1_path, synthseg_labels)
-        subprocess.run(
-            command,
-            check=True,
-            stdout=None if config.verbose >= 3 else subprocess.PIPE,
-            stderr=None if config.verbose >= 3 else subprocess.PIPE,
-            text=True,
-            env=_synthseg_env(synthseg_cmd),
-        )
+        run_checked(command, verbose=config.verbose >= 3, env=_synthseg_env(synthseg_cmd), error_prefix="mri_synthseg")
 
     labels_img = nib.load(str(synthseg_labels))
     t1_img = nib.load(str(t1_path))

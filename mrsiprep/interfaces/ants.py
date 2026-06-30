@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tempfile
 import time
 import os
@@ -11,6 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import nibabel as nib
+
+from mrsiprep.utils.subprocess_utils import run_checked
 
 
 class ANTsError(RuntimeError):
@@ -211,14 +212,7 @@ def run_cli(cmd: list[str], verbose: bool = False, threads: int | None = None) -
     if threads is not None:
         env = os.environ.copy()
         env["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(max(1, int(threads)))
-    subprocess.run(
-        cmd,
-        check=True,
-        stdout=None if verbose else subprocess.PIPE,
-        stderr=None if verbose else subprocess.PIPE,
-        text=True,
-        env=env,
-    )
+    run_checked(cmd, verbose=verbose, env=env, error_cls=ANTsError, error_prefix=cmd[0])
 
 
 def register_cli(

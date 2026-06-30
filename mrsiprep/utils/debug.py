@@ -35,14 +35,16 @@ class Debug:
         # Docker's stdout is often not a TTY, which makes rich auto-disable
         # color; force it on unless the user opted out via NO_COLOR.
         force_color = not os.environ.get("NO_COLOR")
-        self.console = Console(theme=custom_theme, force_terminal=force_color, color_system="standard" if force_color else None)
-        self.verbose = int(verbose)
-        # `force_terminal` above makes `console.is_terminal` report True even when
-        # piped (e.g. into a log file or Docker logs), so live-spinner animation
-        # needs its own check against the real stdout, independent of color forcing.
+        # When stdout isn't a real TTY (e.g. piped into Docker logs), rich
+        # falls back to an 80-column default, which truncates wide tables
+        # (preflight input availability) regardless of the actual terminal
+        # size. Force a wider fixed width in that case.
         import sys
 
         self._is_live_terminal = sys.stdout.isatty()
+        console_width = None if self._is_live_terminal else 200
+        self.console = Console(theme=custom_theme, force_terminal=force_color, color_system="standard" if force_color else None, width=console_width)
+        self.verbose = int(verbose)
 
     def _prepare_message(self, *messages):
         if not messages:
@@ -96,6 +98,12 @@ class Debug:
             prefix, message = self._prepare_message(*messages)
             self.console.print()
             self.console.print(f"{prefix}[proc][  PROC  ][/proc] {escape(message)}")
+
+    def debug(self, *messages):
+        """Fine-grained detail below info(), only shown at verbose >= 3."""
+        if self.verbose >= 3:
+            prefix, message = self._prepare_message(*messages)
+            self.console.print(f"{prefix}[debug][  DEBUG  ][/debug] {escape(message)}")
 
     @contextmanager
     def step(self, *messages, live: bool = True):

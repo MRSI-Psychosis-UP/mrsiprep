@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 
 import nibabel as nib
@@ -11,6 +10,7 @@ import numpy as np
 
 from mrsiprep.io.naming import mrsi_derivative
 from mrsiprep.utils.images import load_3d_data, save_nifti
+from mrsiprep.utils.subprocess_utils import run_checked
 
 
 class PVCError(RuntimeError):
@@ -40,14 +40,13 @@ def run_pvc(config, subject: str, session: str | None, metabolite_maps: dict[str
         out.parent.mkdir(parents=True, exist_ok=True)
         tmp_out = out.with_name(out.name.replace("_desc-pvc_", "_desc-petpvcraw_"))
         cmd = ["petpvc", "-i", str(path), "-m", str(tissue_4d), "-p", "RBV", "-x", str(psf_width), "-y", str(psf_width), "-z", str(psf_width), "-o", str(tmp_out)]
-        try:
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        except subprocess.CalledProcessError as exc:
-            details = "\n".join(part.strip() for part in (exc.stdout, exc.stderr) if part and part.strip())
-            message = f"PETPVC RBV failed for {met} with exit status {exc.returncode}"
+        result = run_checked(cmd, check=False)
+        if result.returncode != 0:
+            details = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part and part.strip())
+            message = f"PETPVC RBV failed for {met} with exit status {result.returncode}"
             if details:
                 message = f"{message}:\n{details}"
-            raise PVCError(message) from exc
+            raise PVCError(message)
         img = nib.load(str(tmp_out))
         _, raw = load_3d_data(path, dtype=np.float32, label=f"{met} map")
         data = np.squeeze(img.get_fdata(dtype=np.float32))

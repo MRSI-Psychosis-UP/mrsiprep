@@ -3,6 +3,8 @@ set -euo pipefail
 
 FSL_ROOT="${FSLDIR:-/opt/fsl}"
 FS_ROOT="$(readlink -f "${FREESURFER_HOME:-/opt/freesurfer}")"
+ANTS_ROOT="${ANTSPATH:-/opt/ants/bin}"
+ANTS_ROOT="$(dirname "${ANTS_ROOT}")"
 
 if [[ ! -x "${FSL_ROOT}/bin/fast" ]]; then
   printf 'FAST was not found at %s/bin/fast\n' "${FSL_ROOT}" >&2
@@ -14,7 +16,7 @@ if [[ ! -x "${FS_ROOT}/bin/recon-all" || ! -x "${FS_ROOT}/bin/mri_synthseg" ]]; 
 fi
 
 printf 'Installed sizes before pruning:\n'
-du -sh "${FSL_ROOT}" "${FS_ROOT}"
+du -sh "${FSL_ROOT}" "${FS_ROOT}" "${ANTS_ROOT}" 2>/dev/null || true
 
 # FAST is the only FSL program called by MRSIPrep. Build a fresh FSL tree with
 # the executable and every FSL/conda library resolved by the dynamic loader.
@@ -36,6 +38,34 @@ done
 rm -rf "${FSL_ROOT}"
 mv "${fsl_runtime}" "${FSL_ROOT}"
 
+# MRSIPrep only ever shells out to antsRegistrationSyN.sh and
+# antsApplyTransforms (interfaces/ants.py), and only as a fallback when
+# antspyx's Python bindings are unavailable; antspyx itself ships its own
+# bundled libs and has no dependency on /opt/ants. Verified this build: ldd
+# on antspyx's compiled extension and on these two binaries shows zero
+# linkage to /opt/ants/lib. N4BiasFieldCorrection is kept too even though
+# nothing currently shells out to it, since utils/provenance.py's
+# required_external_tools() (and this same check_neurodeps.sh) treat it as
+# a required tool. Plus any resolved /opt/ants/lib dependency, mirroring
+# the FSL pattern above.
+if [[ -d "${ANTS_ROOT}" ]]; then
+  ants_runtime="$(mktemp -d /opt/ants-runtime.XXXXXX)"
+  mkdir -p "${ants_runtime}/bin"
+  cp -a "${ANTS_ROOT}/bin/antsRegistrationSyN.sh" "${ants_runtime}/bin/"
+  cp -a "${ANTS_ROOT}/bin/antsRegistration" "${ants_runtime}/bin/"
+  cp -a "${ANTS_ROOT}/bin/antsApplyTransforms" "${ants_runtime}/bin/"
+  cp -a "${ANTS_ROOT}/bin/N4BiasFieldCorrection" "${ants_runtime}/bin/"
+
+  while IFS= read -r library; do
+    [[ -n "${library}" ]] || continue
+    mkdir -p "${ants_runtime}/lib"
+    cp -L "${library}" "${ants_runtime}/lib/$(basename "${library}")"
+  done < <(ldd "${ANTS_ROOT}/bin/antsRegistration" "${ANTS_ROOT}/bin/antsApplyTransforms" "${ANTS_ROOT}/bin/N4BiasFieldCorrection" | awk -v root="${ANTS_ROOT}/" '$3 ~ "^" root {print $3}')
+
+  rm -rf "${ANTS_ROOT}"
+  mv "${ants_runtime}" "${ANTS_ROOT}"
+fi
+
 # Keep the complete recon-all executable/library/atlas runtime. These are the
 # same high-confidence exclusions used by established neuroimaging images and
 # do not participate in MRSIPrep's recon-all, mri_vol2vol, or SynthSeg paths.
@@ -56,16 +86,16 @@ for subject_template in \
 done
 rm -f "${FS_ROOT}/subjects"/sample-*.mgz
 
-# MRSIPrep only ever invokes `mri_synthseg --parc [--fast|--robust]` and
-# `recon-all -all` (no extra optional-module flags). Everything below backs
-# tools or recon-all add-on modules that are never reached on those two call
-# paths: SynthMorph registration, EasyReg, SynthSurf surface placement,
-# photo reconstruction, claustrum/thalamic-nuclei/pineal-gland segmentation,
-# SynthSR super-resolution, SynthSeg's QC scorer (no --qc flag is passed),
-# TopoFit/JOSA surface placement, SynthStrip skull-stripping, ex-vivo atlases,
-# and venous-sinus/dura QC models.
+# MRSIPrep invokes `mri_synthseg --parc [--fast|--robust]` and `recon-all -all`
+# with no extra optional-module flags, but FreeSurfer 8's V8 default expert
+# options (etc/global-expert-options.v8.txt) make `recon-all -all` pull in
+# SynthStrip, SynthMorph, and the vsinus/mca-dura fixer models on every run,
+# so those must be kept. Everything below still backs tools or recon-all
+# add-on modules that are never reached on MRSIPrep's call paths: EasyReg,
+# SynthSurf surface placement, photo reconstruction, claustrum/thalamic-nuclei
+# /pineal-gland segmentation, SynthSR super-resolution, SynthSeg's QC scorer
+# (no --qc flag is passed), TopoFit/JOSA surface placement, and ex-vivo atlases.
 rm -f \
-  "${FS_ROOT}/models/synthmorph."*.h5 \
   "${FS_ROOT}/models/easyreg_"*.h5 \
   "${FS_ROOT}/models/synthsurf_"*.h5 \
   "${FS_ROOT}/models/synthseg_photo_"*.h5 \
@@ -73,12 +103,9 @@ rm -f \
   "${FS_ROOT}/models/thalseg_"*.h5 \
   "${FS_ROOT}/models/synthsr_"*.h5 \
   "${FS_ROOT}/models/synthseg_qc_"*.h5 \
-  "${FS_ROOT}/models/synthstrip."*.pt \
   "${FS_ROOT}/models/exvivo."*.h5 \
   "${FS_ROOT}/models/mris_register_josa_"*.h5 \
-  "${FS_ROOT}/models/vsinus."*.h5 \
-  "${FS_ROOT}/models/sclimbic."*.h5 \
-  "${FS_ROOT}/models/mca-dura."*.h5
+  "${FS_ROOT}/models/sclimbic."*.h5
 rm -rf \
   "${FS_ROOT}/models/pglands_seg" \
   "${FS_ROOT}/models/topofit"
@@ -89,6 +116,14 @@ rm -rf \
   HD-BET nnunetv2 batchgenerators batchgeneratorsv2 \
   dynamic-network-architectures acvl-utils SimpleITK \
   torch torchvision timm 2>/dev/null || true
+
+# NOTE: torch inside FreeSurfer's bundled fspython environment
+# (python/lib/python3.8/site-packages) was investigated as a pruning
+# candidate (mri_synthseg's own script never imports it) but is NOT
+# removable: recon-all -all's V8 default pipeline directly invokes
+# mri_synthstrip (see recon-all's `mri_synthstrip --threads ... -i ... -o
+# ...` call), and mri_synthstrip's script imports torch/torch.nn directly.
+# Removing it broke recon-all in this build; left in place.
 
 # Build and package caches are not runtime dependencies.
 rm -rf \
@@ -104,12 +139,18 @@ find "${python_lib_dir}" /opt/petpvc -type d -name __pycache__ -prune -exec rm -
 find "${python_lib_dir}" /opt/petpvc -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
 
 printf 'Installed sizes after pruning:\n'
-du -sh "${FSL_ROOT}" "${FS_ROOT}"
+du -sh "${FSL_ROOT}" "${FS_ROOT}" "${ANTS_ROOT}" 2>/dev/null || true
 
 if ldd "${FSL_ROOT}/bin/fast" | grep -q 'not found'; then
   printf 'FAST has unresolved shared-library dependencies after pruning.\n' >&2
   exit 1
 fi
+if [[ -x "${ANTS_ROOT}/bin/antsRegistration" ]] && ldd "${ANTS_ROOT}/bin/antsRegistration" | grep -q 'not found'; then
+  printf 'antsRegistration has unresolved shared-library dependencies after pruning.\n' >&2
+  exit 1
+fi
 command -v recon-all >/dev/null
 command -v mri_synthseg >/dev/null
 command -v mri_vol2vol >/dev/null
+command -v antsRegistrationSyN.sh >/dev/null
+command -v antsApplyTransforms >/dev/null
